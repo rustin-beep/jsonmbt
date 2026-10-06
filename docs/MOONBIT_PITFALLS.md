@@ -56,4 +56,6 @@ c`.replace 得 `a-bc`）——全量替换必须循环 `while contains { replace
 
 41. **moon 跨会话/跨 target 增量缓存毒化（2026-10-06 批二双臂对拍实锤）**：并发会话改源后（实例：批二-b 改 `host/host_format.mbt` 的 printf 旗标），本会话 `moon build --release --target wasm-gc` 增量判定 up-to-date——产物**仍是旧代码**，而同刻构建的 native 产物是对的——「同源不同果」酷似 wasm-gc 后端语义 bug，极易误诊；`rm -rf moonbit/_build/wasm-gc` 强制全量重建即愈。**纪律：跨会话接过工作区后消费 wasm-gc/native 产物做行为验证前，先清对应 `_build/<target>` 增量重建**（CI 干净检出天然免疫，本地是唯一暴露面）；「产物 mtime 新」不构成「含新代码」证据（指纹一致三方全旧的 #81 形态同族）。双臂对拍（同输入跑 wasm 壳 vs native exe，`scripts/vitro_cli_smoke`）是最便宜的行为指纹。连坐提醒：`cp` 到 demo/ 的 wasm.wasm 若源自毒化构建同样带毒，demo_smoke 用例不踩该面时不报警。
 
+42. **新工具链要求 `moon.mod` + 块式 `moon.pkg`（jsonmbt 侧回灌，2026-10-06 探针⑥实证）**：rr_moon_mod 特性的新工具链下 `moon.mod.json` / JSON 式 `moon.pkg` 解析失败——必须 `moon.mod` + 块式 `moon.pkg`。本条为 jsonmbt 侧实证回灌（非 Vitro 快照原生条目；编号沿用 jsonmbt PLAN §9 的 #42 登记，Vitro 侧将来若另立 #42 以两侧标注为准）。
+
 
