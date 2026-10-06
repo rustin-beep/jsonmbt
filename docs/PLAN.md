@@ -91,7 +91,7 @@
 | 阶段 | 内容 | 验收锚 | 状态 |
 |---|---|---|---|
 | P0 探针 | 生态扫描 + moon 四件套行为矩阵 + 类型诊断采样 + parser→JSON 管道 + importer 探针四件（label 矩阵/推断原型/大文件性能/**null→Option·Int64·Map 三映射**）+ 竞品深扫 + **Vitro 真实数据两轮压测（44 张 + 冻结分支 2469 张）** | 管道输出合法 JSON；合成+真实+档案三层数据全测，REJECT 全部落在已实锤逃生门内 | ✅ 2026-10-06 |
-| P1 MVP | L0 子集校验 + 降级输出器 + CLI（`build/check`，stdin `-` 约定，**D-10 rc/诊断通道契约**，**D-8 三不变量 + check=build dry-run**，**D-7 单文档基数**）+ **D-3 自持 L0 校验器**（伴生自持 fmt）+ 递归深度防护（参照 Vitro 陷阱 #28 wasm 栈预算探针法）+ 正负样本锚（含 D-9 字符串感知三形态 + 控制字符全族转义） | 端到端 `.json.mbt` → `.json` **按 D-11 规范化器 N 值语义等价**；诊断 ≤1 行 + help；**import→build 往返 N 等价锚**；10+ 样本锚 | 目标 2–3 周（兼职） |
+| P1 MVP | L0 子集校验 + 降级输出器 + CLI（`build/check`，stdin `-` 约定，**D-10 rc/诊断通道契约**，**D-8 三不变量 + check=build dry-run**，**D-7 单文档基数**）+ **D-3 自持 L0 校验器**（伴生自持 fmt）+ 递归深度防护（参照 Vitro 陷阱 #28 wasm 栈预算探针法）+ 正负样本锚（含 D-9 字符串感知三形态 + 控制字符全族转义） | 端到端 `.json.mbt` → `.json` **按 D-11 规范化器 N 值语义等价**；诊断 ≤1 行 + help；**import→build 往返 N 等价锚**；10+ 样本锚 | 🟡 主体落地 2026-10-06：核心库（校验/降级/规范化）+ CLI（rc 0/1/4、stderr 前缀、原子写、stdin）+ moon test 语义锚全绿 + CLI 进程契约手验通过；**余项**：D-9 三形态锚与 import→build 往返锚属 importer 面（随 P1.5）、深度预算 128 待压测校准、层 2 Go 驱动骨架（P1.5 收口） |
 | P1.5 | **importer v1**（形状签名判重 + tagged-enum 识别提示 + D-1 空容器启发 + D-2 Int64 推断落地）+ **`--check` 幂等闸**（flag 包/check 无写副作用/J9 证红）+ **确定性硬锚** + 发 mooncakes 0.2.0 | 确定性锚全绿；check 闸 J9 证红；**Vitro diagnostics 四张试点**（.json.mbt 入仓 + 生成器读降级产物 + Vitro CI 加 `jsonmbt build --check` 步，锁版本） | P1 后 |
 | P2 | **npm 包**（js 出口）+ 在线试玩页（**粘贴 JSON 双向框**）+ **`jsonmbt schema` 导出** + **官方 emitter 微包 jsonmbt-go v1** | 双出口同构输出；npx 可跑；schema 经 ajv/VS Code 实测消费；Vitro 生成器直产试点 | P1.5 后 |
 | P3 | L1/L2 求值分级 + `&` 去重/展开 + **diff 模式**（语义 diff——CI 基线翻转摘要）+ 键集漂移 Option 缺省（v2 观察项转正评估） | L1/L2 探针锚 + diff 人工验收 | P2 后 |
@@ -114,6 +114,9 @@
 | **脚本选型** | 层 2 驱动用 **Go**：五约束交集（独立于 moon/进程编排/零运行时依赖/兼职可维护/复用 Vitro 资产——smoke 驱动·exe 新鲜度门禁·golden 管理直接抄）；Rust/Python 逆版图裁定（刚退役），Node/TS 用漂移源测漂移源，shell 断言力不足，MoonBit 写 driver 过漂移工具链 | 版图一致：Go 本就是「驱动/归一化器」门 |
 | importer 推断 | 形状签名判重；同构数组 `Array[T]`；阻断 issue 全有或全无；tagged-enum（`{Void:true}`）识别提示建模 enum；**字符串值疑似嵌套 JSON（JSON-in-JSON 双层形态）提示**（冻结分支 codegen golden 实测发现的观察项） | 探针 10 样本 + 4 原型 bug 预演 + 2469 压测 |
 | CLI 动词面 | 对齐 CUE：`build`/`check`/`fmt`/`import`/`schema`/`diff` | 心智零迁移 |
+| **值树底座** | **core/json 全套复用**（parse 自带深度预算、stringify、write_escaped 控制字符全族转义）；**实测关键校准**：`Json::Number` 的 repr **仅对超 Double 范围大数保留源文本**（out-of-range fallback），常规数字 1 与 1.0 值层不可分——由此 N 定值语义（N 层 1≡1.0）、「1≠1.0 保留」限定为降级输出侧职责（raw 直传），两维度分立 | P1 实装实测；避免自造第二套 JSON 管线 |
+| **J 系错误码首批** | J0001 用法 / J0002 IO / J1001 .json.mbt 语法 / J1002 JSON 输入语法 / J2001–J2007 文档基数与类型头（缺/多 pub let、stem 不符、深度、顶层声明、重复 struct、类型面外）/ J3001–J3007 值面（非 L0、Map 键、无对应字面量、类型不匹配、未知/缺失/重复字段）；**只增不改**（D-10 纪律），每码至少一负样本锚 | P1 实装；定义在 src/diag.mbt |
+| **CLI 进程面** | rc 0/1/4 已占用（2=漂移差异、3=保留，P1.5+）；诊断 = stderr 机器可读前缀；产物 = 紧凑 JSON（默认同名 .json，stdin `-` → stdout）；原子写 = 同目录临时文件 + rename（Windows 侧 remove-后-rename 的微小窗口期登记为平台限制）；文件输入必须 `.json.mbt` 后缀（防误伤） | P1 实装 + 手验（见 §9） |
 | 命名 | 格式 `.json.mbt`（品牌不变量）/ 包+仓 `rustin-beep/jsonmbt` / CLI `jsonmbt` | owner=产品名重合产生定位噪音 |
 | 竞品边界 | gmlewis = 先驱非威胁；schema 四玩家 = 下游；moonjson = "读"；jsonmbt = "写 + 类型 + 工具链 + 闭环"。README 主动声明共存 | 探针扫描 + 先例矩阵 |
 
@@ -157,6 +160,13 @@
 - **探针⑥数字字面量（D-11 决定性）**：`1e2`（纯整数尾数接指数）**解析错**——被拆成 `1`+标识符；`1.5e3`/`100.0`/`1.0e2` 合法——**指数记法必须带小数点**；16 位整数字面量 Int64 位合法 / Int 位 out of range（再证 D-2 的 2³¹−1 界）。**陷阱 #13 勘误**：原文「e 记法浮点字面量不可用——写定点」不准，实情是「纯整数尾数不行，须带小数点」。**附带新陷阱 #42**：新工具链（rr_moon_mod 特性）下 `moon.mod.json`/JSON 式 `moon.pkg` 解析失败，必须 `moon.mod` + 块式 `moon.pkg`
 - **Vitro 真实数据两轮**：现行仓 44 张 = 19 裸 PASS / 25 REJECT（非法键 39 处·空容器 22·异构 12·动态键文件名/诊断码约 15 张属 A 类不迁）；**冻结分支 2469 张 48.1MB = 49% 裸 PASS，REJECT 100% 落在 tagged-enum/空容器/动态键三门内，零未知形态**——importer 迄今最大规模实战验证
 - **探针产物**：`D:\code\jsonmbt_probe\notes\`（label 件 + 4 生成件 + 大文件产物）——临时环境，P1 起样本迁入本仓 `probe/`，外部路径视为已失效
+- **P1 前置探针（2026-10-06，AST 形态五件 + 底座选型）**：
+  - **AST 白名单实锤**：Map 字面量 = 独立 `Expr::Map(elems)`（非 Record）；`Some(v)` = `Apply(func=Constr("Some"), [位置参数])`；`None` = `Constr("None")`；**负号直接进 Constant raw**（`-1` = `Int("-1")`，无需处理 Unary）；`123L` 的 `Constant::Int64` raw **不含 L 后缀**；record 字段位裸 object literal 合法（`type_name=None`）；**`d : Double = 1` 的 AST 保持 `Int("1")`**（定型是类型层，降级源文本直传）
+  - **勘误（探针 C 误读）**：`Constant::String` 的 raw **未解码**（转义序列原样保留）——P0 探针 json_repr 的转义展示形态造成「已解码」误读；降级器补字符串解码器（`\'` `\"` `\\` `\n` `\r` `\t` `\b` `\f` `\0` `\xHH` `\u{1..6 位}`），解码进值树、输出侧统一 stringify 转义（单源）
+  - **core/json repr 语义**：repr 仅超 Double 范围大数 Some（out-of-range fallback 保源文本）；常规数字值层不可分 1/1.0——N 值语义与降级保真两维度分立（§6 值树底座行）
+  - **core 无同步 fs** → x/fs（read/write/remove）+ 自补三桩（stdin 读全量 / stderr 写 / 原子 rename，UTF-8 路径 Windows 侧宽字符转换）；`#cfg(target="native")` 分后端（`backend=` 谓词不存在——实测踩坑）
+  - **中文边界**：中文可做字段 label 与 Map 键（P0 已证），**不可做 struct 类型名**（MoonBit 要求大写开头，中文按 lowercase 拒）——类型名英文、键位自由
+  - **CLI 进程契约手验通过**（rc 0/1/4 全占、stderr `jsonmbt: error [J3004] path:line:col` + help、D-8 ① 失败零产物不覆盖旧文件、原子写无 tmp 残留、stdin→stdout、两次 build 逐字节一致）
 - 竞品与先例：§2 矩阵
 
 ## 10. 边界声明

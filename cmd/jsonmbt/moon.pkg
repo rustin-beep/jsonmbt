@@ -1,0 +1,17 @@
+// cmd/jsonmbt：CLI 总入口（P1 动词面 build/check；rc 契约见 main.mbt 头注）
+import {
+  "vitro/jsonmbt/src",
+  "moonbitlang/lexer/basic",
+  "moonbitlang/x/fs",
+  "moonbitlang/x/sys",
+  "moonbitlang/core/env",
+  "moonbitlang/x/unicode",
+}
+
+supported_targets = "native"
+
+pkgtype(kind: "executable")
+
+options(
+  "native-stub": [ "native_stubs.c" ],
+)

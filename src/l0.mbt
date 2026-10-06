@@ -1,0 +1,557 @@
+// L0 校验器 + 值提取（D-3 自持校验器的核心；D-8 ② fail loud 在此落地）
+// 白名单（全部探针实锤，PLAN §9）：
+//   Record(type_name?, fields) / Array / Map / Some(v)=Apply(Constr) / None=Constr
+//   Constant::{Int, Int64, Double, Bool, String}——raw 为源文本（负号在 raw 内、
+//   Int64 无 L 后缀、转义已解码），数值直传 Json::Number 的 repr 保真
+// 白名单之外的一切 Expr = 非 L0 = J3001（不设 null 兜底——探针原型的教训）
+// 类型对值校验：期望类型 JType? 驱动（无注解上下文 = 自由值，仅白名单 + 深度）
+
+///|
+const MAX_DEPTH : Int = 128
+// 深度预算（Vitro 陷阱 #28 探针法）：先取保守值，压测校准后钉死进锚；超限 J2004
+
+///|
+/// 数值源文本 → Json：剥 MoonBit 允许的下划线分隔符（JSON 不允许）；
+/// Double 占位仅供 as_number 消费，repr 保真（stringify/N 走源文本）
+fn num_json(raw : String, loc : @basic.Location) -> Json raise Diag {
+  match numeric_text(raw) {
+    Ok(t, _) => {
+      // 透传 core parse 的完整 Number 语义（value+repr：超范围大数自动走
+      // out-of-range fallback 保源文本），再把 repr 钉到归一文本 t——
+      // 降级输出按 t（源文本直传），值语义归一由 N 侧 canon 负责
+      let parsed : Json? = try {
+        Some(@json.parse(t))
+      } catch {
+        _ => None
+      }
+      match parsed {
+        Some(j) =>
+          if j is Number(d, ..) {
+            Json::number(d, repr=t)
+          } else {
+            abort("unreachable: numeric text parses to Number")
+          }
+        None =>
+          raise Diag(
+            code=JBadLiteral,
+            loc=loc,
+            message="malformed numeric literal '\{raw}'",
+            help=None,
+            path="",
+          )
+      }
+    }
+    Overflow(t) =>
+      raise Diag(
+        code=JBadLiteral,
+        loc=loc,
+        message="numeric literal '\{raw}' exceeds Int64 (normalized '\{t}')",
+        help=None,
+        path="",
+      )
+    Illegal =>
+      raise Diag(
+        code=JBadLiteral,
+        loc=loc,
+        message="malformed numeric literal '\{raw}'",
+        help=None,
+        path="",
+      )
+  }
+}
+
+///|
+priv enum NumParse {
+  Ok(String, Int64) // (十进制文本, Int64 视图；浮点时视图为占位 0)
+  Overflow(String)
+  Illegal
+}
+
+///|
+/// raw 字面量 → 十进制文本：剥下划线；0x/0o/0b 进制归一（JSON 只有十进制）；
+/// 整数全过 Int64 累加器——溢出即 Overflow（D-2 超 Int64 诚实拒绝的判据）
+fn numeric_text(raw : String) -> NumParse {
+  let s = raw.replace(old="_", new="")
+  if s == "" {
+    return Illegal
+  }
+  // 符号
+  let neg = s[0] == '-'
+  let digits : StringView = if neg || s[0] == '+' { s[1:] } else { s[:] }
+  // 进制前缀（浮点不与进制前缀共存）
+  let base : Int = if digits.length() > 2 {
+    match digits[0:2] {
+      "0x" | "0X" => 16
+      "0o" | "0O" => 8
+      "0b" | "0B" => 2
+      _ => 10
+    }
+  } else {
+    10
+  }
+  let body : StringView = if base == 10 { digits } else { digits[2:] }
+  if base != 10 && body == "" {
+    return Illegal
+  }
+  // 浮点（仅十进制）：含 . / e / E——Double 占位走 @json.parse，界检查不适用
+  if base == 10 && (body.contains(".") || body.contains("e") || body.contains("E")) {
+    return Ok(s, 0L)
+  }
+  // 整数：Int64 累加（溢出检测），十进制输出
+  let mut acc : Int64 = 0L
+  // 正负两侧同用 2^63-1 界：-2^63 这个单点值按 Overflow 处理（诚实拒绝，登记在 D-11 已知面）
+  let limit : Int64 = 9223372036854775807L
+  for ch in body {
+    let d = digit_value(ch)
+    match d {
+      Some(k) => {
+        // acc*base + k <= limit  ⇔  acc <= (limit-k)/base（base>0 整除安全侧再复核）
+        if acc > (limit - k.to_int64()) / base.to_int64() {
+          return Overflow(s)
+        }
+        acc = acc * base.to_int64() + k.to_int64()
+      }
+      None => return Illegal
+    }
+  }
+  let v = if neg { -acc } else { acc }
+  Ok("\{v}", v)
+}
+
+///|
+fn digit_value(ch : Char) -> Int? {
+  if ch >= '0' && ch <= '9' {
+    Some(ch.to_int() - '0'.to_int())
+  } else if ch >= 'a' && ch <= 'f' {
+    Some(ch.to_int() - 'a'.to_int() + 10)
+  } else if ch >= 'A' && ch <= 'F' {
+    Some(ch.to_int() - 'A'.to_int() + 10)
+  } else {
+    None
+  }
+}
+
+///|
+/// J3004 helper
+fn type_mismatch(
+  loc : @basic.Location,
+  expected : String,
+  got : String,
+  help~ : String? = None,
+) -> Diag {
+  Diag(
+    code=JFieldType,
+    loc=loc,
+    message="expects \{expected}, got \{got}",
+    help=help,
+    path="",
+  )
+}
+
+///|
+/// J3001 helper：非 L0 表达式
+fn not_literal(loc : @basic.Location, what : String) -> Diag {
+  Diag(
+    code=JNotLiteral,
+    loc=loc,
+    message="\{what} is outside the L0 pure-literal subset",
+    help=Some(
+      "use a literal value (record, array, map, or scalar); for anything computed, write real MoonBit instead",
+    ),
+    path="",
+  )
+}
+
+///|
+fn check_depth(depth : Int, loc : @basic.Location) -> Unit raise Diag {
+  if depth > MAX_DEPTH {
+    raise Diag(
+      code=JDeep,
+      loc=loc,
+      message="nesting exceeds the depth budget of \{MAX_DEPTH}",
+      help=Some("flatten the data or split it into several .json.mbt files"),
+      path="",
+    )
+  }
+}
+
+///|
+fn in_i32_range(v : Int64) -> Bool {
+  v >= -2147483648L && v <= 2147483647L
+}
+
+///|
+/// L0 提取主函数：Expr → Json 值树（校验与降级同一趟——D-8 check=build 同路径的前提）
+fn l0_expr(
+  env : Map[String, StructDef],
+  e : @syntax.Expr,
+  ty : JType?, // 期望类型；None = 无类型上下文（自由值）
+  depth : Int,
+) -> Json raise Diag {
+  check_depth(depth, expr_loc(e))
+  match e {
+    Constant(c~, loc~) => l0_constant(c, ty, loc)
+    Record(type_name~, fields~, loc~, ..) =>
+      l0_record(env, type_name, fields, ty, depth, loc)
+    Array(exprs~, loc~, ..) => {
+      let elem_ty : JType? = match ty {
+        Some(JTArray(t)) => Some(t)
+        Some(other) => raise type_mismatch(loc, other.show(), "array")
+        None => None
+      }
+      let arr : Array[Json] = []
+      for e2 in exprs {
+        arr.push(l0_expr(env, e2, elem_ty, depth + 1))
+      }
+      Json::array(arr)
+    }
+    Map(elems~, loc~) => l0_map(env, elems, ty, depth, loc)
+    Apply(func~, args~, loc~) => {
+      // Some(v)：func = Constr(Some)，单个位置参数（探针实锤形态）
+      let is_some = func is Constr(constr~, ..) && constr.name.name == "Some"
+      if is_some {
+        // 恰好一个位置参数才视为 Some(v)（List 构造器不公开——按 head/size 检查）
+        let arg : @syntax.Expr? = if args.length() == 1 {
+          match args.head() {
+            Some({ value, kind: Positional }) => Some(value)
+            _ => None
+          }
+        } else {
+          None
+        }
+        match arg {
+          Some(v) =>
+            match ty {
+              Some(JTOption(t)) => l0_expr(env, v, Some(t), depth + 1)
+              Some(other) =>
+                raise type_mismatch(
+                  loc,
+                  other.show(),
+                  "Some(...)",
+                  help=Some("wrap values in Some(...) only for Option[T] fields"),
+                )
+              None => l0_expr(env, v, None, depth + 1)
+            }
+          None => raise not_literal(loc, "Some(...) with non-positional arguments")
+        }
+      } else {
+        raise not_literal(loc, "function call")
+      }
+    }
+    Constr(constr~, loc~) =>
+      if constr.name.name == "None" {
+        match ty {
+          Some(JTOption(_)) | None => Json::null()
+          Some(other) => raise type_mismatch(loc, other.show(), "null")
+        }
+      } else {
+        raise not_literal(loc, "constructor '\{constr.name.name}'")
+      }
+    Unary(..) => raise not_literal(expr_loc(e), "unary operator expression")
+    Infix(..) => raise not_literal(expr_loc(e), "arithmetic expression")
+    If(..) => raise not_literal(expr_loc(e), "if expression")
+    Ident(..) => raise not_literal(expr_loc(e), "identifier reference")
+    Interp(..) => raise not_literal(expr_loc(e), "string interpolation")
+    MultilineString(..) => raise not_literal(expr_loc(e), "multiline string")
+    _ => raise not_literal(expr_loc(e), "this expression")
+  }
+}
+
+///|
+fn l0_constant(
+  c : @syntax.Constant,
+  ty : JType?,
+  loc : @basic.Location,
+) -> Json raise Diag {
+  match c {
+    Int(raw) =>
+      match ty {
+        Some(JTInt) =>
+          match numeric_text(raw) {
+            Ok(_, v) =>
+              if in_i32_range(v) {
+                num_json(raw, loc)
+              } else {
+                raise type_mismatch(
+                  loc,
+                  "Int (32-bit)",
+                  "\{raw}",
+                  help=Some("change the field type to Int64, or use a value within ±2147483647"),
+                )
+              }
+            Overflow(_) =>
+              raise type_mismatch(
+                loc,
+                "Int (32-bit)",
+                "\{raw}",
+                help=Some("the value exceeds even Int64; keep exact digits by storing a String explicitly"),
+              )
+            Illegal => num_json(raw, loc) // 交由 num_json 统一报 J3003
+          }
+        Some(JTInt64) =>
+          match numeric_text(raw) {
+            Ok(_, _) => num_json(raw, loc)
+            Overflow(_) =>
+              raise type_mismatch(
+                loc,
+                "Int64",
+                "\{raw}",
+                help=Some("the value exceeds Int64; keep exact digits by storing a String explicitly"),
+              )
+            Illegal => num_json(raw, loc)
+          }
+        // 探针 p5：`d : Double = 1` 的 AST 是 Int 字面量——源文本直传（类型头是
+        // 压缩侧元信息，不改写值文本——PLAN §0 第一性原理）
+        Some(JTDouble) | None => num_json(raw, loc)
+        Some(other) => raise type_mismatch(loc, other.show(), "Int literal")
+      }
+    Int64(raw) =>
+      match ty {
+        Some(JTInt64) | None => num_json(raw, loc)
+        Some(other) => raise type_mismatch(loc, other.show(), "Int64 literal")
+      }
+    Double(raw) =>
+      match ty {
+        Some(JTDouble) | None => num_json(raw, loc)
+        Some(other) => raise type_mismatch(loc, other.show(), "Double literal")
+      }
+    Bool(b) =>
+      match ty {
+        Some(JTBool) | None => Json::boolean(b)
+        Some(other) =>
+          raise type_mismatch(loc, other.show(), if b { "true" } else { "false" })
+      }
+    String(raw) =>
+      match ty {
+        Some(JTString) | None => Json::string(unescape_string(raw, loc))
+        Some(other) =>
+          raise type_mismatch(
+            loc,
+            other.show(),
+            "String literal",
+            help=Some("change the field type to String, or remove the quotes"),
+          )
+      }
+    Char(_) => raise bad_literal(loc, "Char")
+    Byte(_) => raise bad_literal(loc, "Byte")
+    Bytes(_) => raise bad_literal(loc, "Bytes")
+    UInt(_) => raise bad_literal(loc, "UInt")
+    UInt64(_) => raise bad_literal(loc, "UInt64")
+    Float(_) => raise bad_literal(loc, "Float (JSON has no 32-bit float)")
+    Regex(_) => raise bad_literal(loc, "Regex")
+    BigInt(_) => raise bad_literal(loc, "BigInt")
+  }
+}
+
+///|
+fn bad_literal(loc : @basic.Location, what : String) -> Diag {
+  Diag(
+    code=JBadLiteral,
+    loc=loc,
+    message="\{what} literal has no JSON counterpart",
+    help=Some("JSON values are null/bool/number/string/array/object only"),
+    path="",
+  )
+}
+
+///|
+/// env 查表；缺定义即 raise（不用 get_or——default 立即求值会无条件 raise）
+fn lookup_struct(
+  env : Map[String, StructDef],
+  name : String,
+  loc : @basic.Location,
+) -> StructDef raise Diag {
+  match env.get(name) {
+    Some(d) => d
+    None => missing_struct(name, loc)
+  }
+}
+
+///|
+/// Record → JSON 对象；期望 struct 时做字段集校验（未知/缺失/重复）
+fn l0_record(
+  env : Map[String, StructDef],
+  type_name : @syntax.TypeName?,
+  fields : @list.List[@syntax.FieldDef],
+  ty : JType?,
+  depth : Int,
+  loc : @basic.Location,
+) -> Json raise Diag {
+  check_depth(depth, loc)
+  // 定位本 record 的 schema：期望 struct 名 / 字面量类型名 / 自由对象（三者）
+  let sd : StructDef? = match (ty, type_name) {
+    (Some(JTStruct(n)), Some(tn)) => {
+      let q = longident_name(tn.name)
+      if q != n {
+        raise type_mismatch(
+          loc,
+          n,
+          q,
+          help=Some("the record label must match the field type"),
+        )
+      }
+      Some(lookup_struct(env, n, loc))
+    }
+    (Some(JTStruct(n)), None) => Some(lookup_struct(env, n, loc))
+    (Some(other), _) =>
+      raise type_mismatch(
+        loc,
+        other.show(),
+        "record/object",
+        help=Some("wrap the value in the field's type, e.g. StructName::{ ... }"),
+      )
+    (None, Some(tn)) => {
+      let q = longident_name(tn.name)
+      Some(lookup_struct(env, q, loc))
+    }
+    (None, None) => None
+  }
+  let obj : Map[String, Json] = Map([])
+  for f in fields {
+    let label = f.label.name
+    if obj.contains(label) {
+      raise Diag(
+        code=JDupField,
+        loc=f.label.loc,
+        message="duplicate field '\{label}'",
+        help=Some("merge the two values into one; a degraded object never carries duplicate keys"),
+        path="",
+      )
+    }
+    let fty : JType? = match sd {
+      Some(d) =>
+        match d.fields.iter().find_first(fn(f) { f.0 == label }) {
+          Some((_, t, _)) => Some(t)
+          None =>
+            raise Diag(
+              code=JUnknownField,
+              loc=f.label.loc,
+              message="unknown field '\{label}'",
+              help=Some("struct '\{d.name}' has fields: \{field_names(d)}"),
+              path="",
+            )
+        }
+      None => None
+    }
+    obj[label] = l0_expr(env, f.expr, fty, depth + 1)
+  }
+  // 缺字段：record 字面量必须给全字段（Option 字段写 None——D-5 v1 先拒对齐）
+  match sd {
+    Some(d) =>
+      for f in d.fields {
+        if !obj.contains(f.0) {
+          raise Diag(
+            code=JMissingField,
+            loc=loc,
+            message="missing field '\{f.0}' in '\{d.name}'",
+            help=Some("provide the field explicitly; Option[T] fields use None"),
+            path="",
+          )
+        }
+      }
+    None => ()
+  }
+  Json::object(obj)
+}
+
+///|
+/// Map 字面量 → JSON 对象（键名逃生门的降级侧；key 必须 String 字面量）
+fn l0_map(
+  env : Map[String, StructDef],
+  elems : @list.List[@syntax.MapExprElem],
+  ty : JType?,
+  depth : Int,
+  loc : @basic.Location,
+) -> Json raise Diag {
+  check_depth(depth, loc)
+  let vty : JType? = match ty {
+    Some(JTMap(k, v)) => {
+      // JSON 键即字符串：非 String 键类型在类型头层即拒（Map 逃生门适用面）
+      if !(k is JTString) {
+        raise type_mismatch(
+          loc,
+          "Map[String, V]",
+          "Map with non-String keys",
+          help=Some("JSON object keys are strings; declare Map[String, V]"),
+        )
+      }
+      Some(v)
+    }
+    Some(other) => raise type_mismatch(loc, other.show(), "map literal")
+    None => None
+  }
+  let obj : Map[String, Json] = Map([])
+  for el in elems {
+    let key = match el.key {
+      String(raw) => raw
+      other =>
+        raise Diag(
+          code=JMapKey,
+          loc=el.key_loc,
+          message="map key must be a string literal, got \{constant_shape(other)}",
+          help=Some("JSON object keys are strings; quote the key"),
+          path="",
+        )
+    }
+    if obj.contains(key) {
+      raise Diag(
+        code=JDupField,
+        loc=el.key_loc,
+        message="duplicate key \"\{key}\"",
+        help=Some("merge the two entries; a degraded object never carries duplicate keys"),
+        path="",
+      )
+    }
+    obj[key] = l0_expr(env, el.expr, vty, depth + 1)
+  }
+  Json::object(obj)
+}
+
+///|
+fn constant_shape(c : @syntax.Constant) -> String {
+  match c {
+    Bool(_) => "Bool"
+    Int(_) => "Int"
+    Int64(_) => "Int64"
+    Double(_) => "Double"
+    String(_) => "String"
+    Char(_) => "Char"
+    Byte(_) => "Byte"
+    Bytes(_) => "Bytes"
+    UInt(_) => "UInt"
+    UInt64(_) => "UInt64"
+    Float(_) => "Float"
+    Regex(_) => "Regex"
+    BigInt(_) => "BigInt"
+  }
+}
+
+///|
+/// 类型头引用了本文件未定义的 struct（L0 单文件自持，D-4）
+fn missing_struct(name : String, loc : @basic.Location) -> StructDef raise Diag {
+  raise Diag(
+    code=JFieldType,
+    loc=loc,
+    message="struct '\{name}' is not defined in this file",
+    help=Some(".json.mbt is single-file and self-contained; define the struct here"),
+    path="",
+  )
+}
+
+///|
+fn field_names(d : StructDef) -> String {
+  let buf = StringBuilder()
+  for i, f in d.fields {
+    if i > 0 {
+      buf.write_string(", ")
+    }
+    buf.write_string(f.0)
+  }
+  buf.to_string()
+}
+
+///|
+/// Expr 自带位置的便捷取用
+fn expr_loc(e : @syntax.Expr) -> @basic.Location {
+  @syntax.loc_of_expression(e)
+}

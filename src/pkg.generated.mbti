@@ -1,11 +1,53 @@
 // Generated using `moon info`, DON'T EDIT IT
 package "vitro/jsonmbt/src"
 
+import {
+  "moonbitlang/lexer/basic",
+}
+
 // Values
+pub fn build_source(String, path? : String, expected_name? : String) -> String raise Diag
+
+pub fn build_value(String, path? : String, expected_name? : String) -> Json raise Diag
+
+pub fn check_source(String, path? : String, expected_name? : String) -> Unit raise Diag
+
+pub fn json_value_equal(Json, Json) -> Bool
+
+pub fn normalize_json(Json) -> Json
+
+pub fn normalize_json_text(String) -> String raise Diag
 
 // Errors
+pub(all) suberror Diag {
+  Diag(code~ : JCode, loc~ : @basic.Location, message~ : String, help~ : String?, path~ : String)
+}
+pub fn Diag::code(Self) -> JCode
+pub fn Diag::render(Self) -> String
 
 // Types and methods
+pub(all) enum JCode {
+  JUsage
+  JIO
+  JSyntax
+  JJsonSyntax
+  JNoDoc
+  JMultiDoc
+  JStemMismatch
+  JDeep
+  JBadTop
+  JDupStruct
+  JBadFieldType
+  JNotLiteral
+  JMapKey
+  JBadLiteral
+  JFieldType
+  JUnknownField
+  JMissingField
+  JDupField
+}
+pub fn JCode::exit_code(Self) -> Int
+pub fn JCode::num(Self) -> String
 
 // Type aliases
 
