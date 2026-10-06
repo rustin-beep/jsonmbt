@@ -20,7 +20,8 @@ fn json_escape(s : String) -> String {
 fn expr_to_json(e : @syntax.Expr) -> String {
   match e {
     @syntax.Expr::Record(fields~, ..) => {
-      // 类型名剥除（Server { ... } → { ... }）——.json.mbt 的核心降级语义
+      // 类型名剥除（Server::{ ... } → { ... }）——.json.mbt 的核心降级语义
+      // （实测 2026-10-06：record 字面量必须 Server::{ } 形态；裸 Server { } 报错 missing '::'）
       let buf = StringBuilder()
       buf.write_string("{")
       let n = fields.length()

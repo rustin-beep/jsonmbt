@@ -1,0 +1,59 @@
+# MoonBit 语言与工具链陷阱（快照）
+
+> **来源**：Vitro 仓 `moonbit/AGENTS.md`（commit 8b7c67db，as_of 2026-10-06，moon 0.1.20260920）的全文快照——跨仓不引用所以整段复制。文中「本仓」与包路径（`bytecode/emitter.mbt` 等）指 **Vitro**；jsonmbt 侧**按规则参照，代码位置按需重找**。条目编号保持原号以便两边对照与后续同步。
+
+
+> 以下是**工程语法/工具层**一手实证（多数来自真实编译器报错与探针），jsonmbt 开发前当既定事实读，可省一轮编译-报错循环。
+
+1. **`ref` 是保留字**——可变局部状态用 `let mut x = 0`（`Array.push` 改内容**不需要** mut，mut 只管重新绑定；unused_mut 默认 error）。
+2. **比较 trait 是 `Compare` 不是 `Ord`**——`derive(Debug, Eq, Compare, Hash, Default)`；derive 子句在类型体 `{}` 之后。
+3. **`derive` 不能作方法名**（关键字）——S1 用 `Pos::from_byte_off` 替代。
+4. **枚举构造器可与其余类型名同名**（`Type::Int` 与内置 `Int` 按期望类型消歧）；但**两个枚举的同名构造器**（`AssignOp::Assign` vs `Expr::Assign`）在构造与模式两处都要显式 `Expr::Assign(...)` 限定。
+5. **跨包类型必须 `@pkg.` 前缀**——包括 struct 字段类型与函数签名参数（`loc : @source.SourceLoc`），裸类型名会撞"未定义"或静默歧义。
+6. **无参构造器模式**要逐参数通配：`Literal(_, _, _)`——`Literal(..)` 不是合法通配。
+7. **`for k, v in` 只解构 Map**——元组数组迭代用 `for t in arr` 后 `t.0 / t.1`。
+8. **fn 参数不能 `mut`**（`mut stack : ...` 是解析错误）；局部重绑定不需要时勿加 mut。
+9. **大写开头的局部绑定非法**（`let L = ...` 编译错）。
+10. **`assert_true(x)` 单参数**——带消息断言用 `guard cond else { fail("...") }`。
+11. **`String::substring` 已弃用**——用切片 `s[a:b]`（ASCII 安全场景免 try）+ `.to_owned()`（视图转拥有串；`.to_string()` 在视图上同样弃用）。
+12. **`<+` / `<?` 宏右侧只能接模板字符串/对象字面量**——任意表达式（函数调用、Int）不合法，用 `buf.write_string("...\{interp}")`。
+13. **`1e16` 等 e 记法浮点字面量不可用**——写定点 `10000000000000000.0`；指数值用除法/构造。
+14. **`Double::to_string` 与 serde_json/ryu 两处分歧**（实测）：整值 `1.0 → "1"`、负零 `-0.0 → "0"`；中段指数区间（≥1e16 / ≤1e-6）两侧记法不同。**JSON 浮点文本化必须走 `@ast.double_to_json_text`**（ryu-pretty 全区间对齐 + 非有限 → null）——那是单源，禁再写一份。
+15. **moon fmt 宽度按 UTF-8 字节计**（中文 3 字节；超 ~84 字节爆开/折行）——**生成物与 fmt 会互踩**：gen_diag 的解法是生成流程内置 `moon fmt`，产物形态以 fmt 为准，gen 原始输出只是中间态。任何新生成器沿用此模式。
+16. **doc 测试（docstring `mbt check` 块与 `*.mbt.md`）是黑盒**——被测包自动 import 为 `@self`，构造器要 `@pkg.Type::Variant` 形态；README.mbt.md 同理（它同时是可执行测试文件）。
+17. **`moon.mod` / `moon.pkg` 是新格式**（非 .json）；`moon.pkg` 的 import 块声明依赖，代码内一律 `@alias.fn` 调用。
+18. **mooncakes 发布规则**：module 名首段**必须等于发布者用户名**（`vitro/engine` ↔ 账号 `vitro`；403 User mismatch 即此因）；发布后 checksum 入 registry **不可覆盖**——修复只能递增版本；readme 字段须指向**根 `README.md`**（`README.mbt.md` 不会被模块页渲染）；索引同步有数分钟延迟（`moon add` 暂时 404 是正常节奏，轮询即可）。
+19. **本仓库 bash 工具层的 heredoc 会吃一层反斜杠转义**（`\\n` 变真换行、`\r\n` 字面量损毁）——跨 heredoc 写 Go/代码文件时用 `chr()` 拼接或 python 中转写盘；此坑曾致 gen_diag 归一逻辑静默变空操作（P2-1 复盘）。
+20. **core `Map`/`Set` 是可变哈希结构**（`Map::set(k,v)` / `Set::add(k)` 原地、返回 Unit；S3 实测）——勘察 M3 设想的"不可变结构共享快照"不成立，回滚快照 = `.copy()` 整表拷贝（教学符号表小，可接受）。
+21. **`loop { ... }` 是函数式循环（deprecated 语法且 `break` 不适用）**——命令式循环写 `while true { ... break }`（S3 瀑布实测）。
+22. **顶层常量用 `const`**（`let MAX_X = ...` 大写绑非法：Expected lower case identifier）。
+23. **match guard 必须与模式同行**（`_ if cond =>` 跨行非法）；**或模式分支的构造器各自全参展开**（`Reference(..)` 不合法——`..` 剩余通配不存在，逐参数 `_`）。
+24. **`String` 索引/`s[i]` 返回 UInt16 码元**（非 Char）——`write_char(s[i])` 类型错；切片 `substring(start=a, end=b)` 命名参数形态（位置参数形态非法）。
+25. **数值位模式重解释**：`UInt64::to_int64` = `%u64.to_i64_reinterpret`（bitcast，正是 Rust `as i64`）；`Int64::to_int` 语义未文档化——i64→i32 截断自己写（低 32 位符号解释，见 parser/decl.mbt `i64_to_i32_bits`）；`Int::to_int64` 是符号扩展（= Rust `as i64`）。
+26. **wbtest 不携带 `for "test"` import**（黑盒专用配置）——白盒测试要跨包输入就手工构造（如 token 数组），或把用例放黑盒。
+27. **JSON 字符串输出必须转义 < 0x20 控制字符**（`\u00XX`，serde_json 口径）——C 转义序列（`\x4`）解析出的真字节原样写出即非法 JSON（S3 由 baseline 的 string_escape_octal_hex.c 差分抓出）。
+28. **wasm 测试运行时的栈预算比 moonrun 更紧**（S3 实测：`interpret_declarator_node` **递归解释**形态 900 层过 / 1200 层溢出——目标 wasm；同函数迭代化后 1250 层全存活；`node_cross_count` 的纯计数递归在 wasm-gc/native 三后端 1250 层存活（S3 审阅实测）——旧区间只适用于"递归解释"形态，勿外推到计数函数）——深结构处理一律迭代化（显式栈/下钻折叠），不能依赖"Rust 侧能过的深递归这里也能过"。
+29. **`String` 的 `compare` 与 `<`/`>` 均非字典序**（S5 bytecode 白盒实测：`"delta" > "charlie"` 为 **false**、`"delta".compare("charlie")` 返回 **-1**——疑似长度优先序）——排序/对拍类逻辑**禁用内置 String 比较**，按码元逐位自写字典序（见 bytecode/emitter.mbt `str_cmp`）；Go canonicalize 的 sort.Strings 是字节字典序，ASCII 域两者等价，非 ASCII 键域需显式裁定。
+
+## MoonBit 语义实证补充（S6 建包批，2026-09-23 探针实测）
+
+> 以下全部由一次性探针程序当场跑出真值（`inspect` 期望值锚），非文档推断。建新包前先把这些当既定事实，可省一轮编译-报错循环。
+
+30. **struct 是"按引用"传递的**——**字段变更对调用方可见**，普通参数与 `self` 一样生效（实测：`fn bump(c : ProbeCtr) { c.n = c.n + 1 }` 连调两次后调用方看到 `n == 2`）。⇒ ① 需要"值语义"时得显式复制；② **这正是本仓 `MemoryMap`/`Memory` 能把"容器字段的变更"直接暴露给下游的原因**；③ 也意味着"返回内部结构"会暴露可写句柄，要控面就得控制返回类型。
+31. **`mut` 字段的赋值不要求 `let mut`**——`let r = Rec::{ ... }` 后 `r.f = v` 合法（`mut` 只管**字段**，不管绑定；与陷阱 #1"mut 只管重新绑定"互补：那一句说的是局部变量，字段同理但受限更松）。match 绑定（`Some(r) => { r.f = v }`）同样合法。**结构展开 `{ ..r, f: v }` 可用**。
+32. **`for k, v in` 对数组是 `(下标, 元素)` 解构，不是元组解构**（陷阱 #7 的补全）——`for a, b in array_of_tuples` 拿到的是 `Int` 下标，静默错类型，必须 `for t in arr { t.0 / t.1 }`；只有 `Map` 是 `(键, 值)`。
+33. **core 的 `Map` 即 LinkedHashMap**（`linked_hash_map.mbt` 实现的就是 `Map`）——**迭代序 = 插入序**，且既有键 `set` **保持原插入位**（等键分支只写 value）；但**没有 `get_mut`**——就地改值要么 `update(k, fn(V?) -> V?)`（闭包内改 mut 字段），要么 `get` 出来改完 `set` 回去。⇒ "Vec + 平行索引"可整体换成 `Map[K, V]`：O(1) 定位 + 保序 + **失配面归零**（S6 memory 的 regions 即此形态，消掉坑 6 的根因）。
+34. **弃用 API 三例（`moon check` 会给 `deprecated` 告警）**：`Array::new(capacity=)` → `Array(capacity=)`、`Deque::new()` → `Deque([])`、`Int::to_uint` / `UInt::to_int` → `reinterpret_as_uint` / `reinterpret_as_int`（**语义相同，只是把"重解释"写明**；注意 `to_uint64()` 未弃用）。
+35. **`FixedArray[Byte]` 只有写侧 LE 原语**（`unsafe_write_uint32_le` / `..._uint64_le`），**读侧原语只在 `Bytes`**（`Bytes::unsafe_read_uint32_le`）——用 `FixedArray[Byte]` 当内存本体时，读必须手工 4/8 次索引拼装（与 Rust `i32::from_le_bytes([m[a],...])` 同形）。
+36. **`moon build --target native main` 的 `main` 是目录过滤器而非包名**——目录是否被当包**只看有无 moon.pkg**：只写 main/main.mbt 漏 moon.pkg ⇒ 该目录不算包 ⇒ 构建任务数 0 ⇒ **EXIT=0 零输出零产物静默不构建**（2026-09-27 用户 bench 巩固工程实测；判定看"ran N tasks"的 N）。顺带：main 函数签名须无参 `fn main { ... }`（带参/带 raise 均拒绝），参数化用编译期 const 切换重编译。
+37. **`String::replace` 只替换首个匹配**（2026-09-29 stdin 34 例批实锤：`a
+b
+c`.replace 得 `a-bc`）——全量替换必须循环 `while contains { replace }`（先例 `host_io.mbt::from_stdin_text` 的 CRLF 规整）；单符号场景（指数文本剥 +/-）不受影响。同族新单源：`InputState::from_stdin_text`（stdin 切行——行含尾换行，serve input 参数 / cmd/run -i 共用），勿再散拼。
+38. **经 shell/python 管道写源码时反斜杠转义会层层衰减**（2026-09-23 P2-NUL 事故）：JSON→shell→python 三级解码会吃掉层层反斜杠（两层写法只剩一层，再经 python 字符串解析即成真字节）——`b"hello\x00"` 落成二进制文件、git 判 `w/-text`、15KB 测试 diff 不可见。写含转义序列的源码一律用 `chr(92)` 构造，或写完后 `source_hygiene` 扫一遍兜底。同族：注释里的 \n 会断行、Go 字符串里的 \n 会变真换行。
+39. **测试宏的说明文字必须用 `msg=` 具名参数**——`assert_eq(a, b, "说明")` 会被拒（"requires 2 positional arguments"），写 `assert_eq(a, b, msg="说明")`；`assert_true`/`assert_false` 同理。另：**`_` 不能作 `for` 循环变量名**（`for _ = 0; ...` 是解析错误，换 `i`/`n`）。
+
+40. **wasm-gc 导出三事实（2026-09-29 批五号一手实证）**：① 导出 = `pkgtype(kind: "foreign_library")` + `#export_name("名")` 属性（executable 形态只导 `_start`，pub fn 不自动导出）；② String 直传 = moon.pkg `options("link": {"wasm-gc": {"use-js-builtin-string": true}})` + 宿主 `new WebAssembly.Module(buf, {builtins:['js-string'], importedStringConstants:'_'})`（不开内建则 String 是 GC 引用类型、宿主无法构造——「type incompatibility」）；③ foreign_library 不拉 println 链 ⇒ 产物零**功能性** imports（import 段仅 "_" 字符串常量模块——字节层 ≈2000 条，旧 Node 以真实 import 呈现需宿主兜底）。注意 moon.pkg 的 link 不是顶层键（`link = {...}` 解析失败——须 `options("link": {...})`）。
+
+41. **moon 跨会话/跨 target 增量缓存毒化（2026-10-06 批二双臂对拍实锤）**：并发会话改源后（实例：批二-b 改 `host/host_format.mbt` 的 printf 旗标），本会话 `moon build --release --target wasm-gc` 增量判定 up-to-date——产物**仍是旧代码**，而同刻构建的 native 产物是对的——「同源不同果」酷似 wasm-gc 后端语义 bug，极易误诊；`rm -rf moonbit/_build/wasm-gc` 强制全量重建即愈。**纪律：跨会话接过工作区后消费 wasm-gc/native 产物做行为验证前，先清对应 `_build/<target>` 增量重建**（CI 干净检出天然免疫，本地是唯一暴露面）；「产物 mtime 新」不构成「含新代码」证据（指纹一致三方全旧的 #81 形态同族）。双臂对拍（同输入跑 wasm 壳 vs native exe，`scripts/vitro_cli_smoke`）是最便宜的行为指纹。连坐提醒：`cp` 到 demo/ 的 wasm.wasm 若源自毒化构建同样带毒，demo_smoke 用例不踩该面时不报警。
+
+
