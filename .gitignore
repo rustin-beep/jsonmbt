@@ -8,3 +8,6 @@ _build/
 /.claude/
 /.cursor/
 tmp/
+
+# 视觉资产：PNG 均为 SVG 派生物，禁止直接编辑、不入库（见 assets/README.md 纪律）
+assets/*.png
