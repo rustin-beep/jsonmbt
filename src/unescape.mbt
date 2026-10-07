@@ -62,7 +62,7 @@ fn unescape_string(raw : String, loc : @basic.Location) -> String raise Diag {
               None => raise malformed_string(raw, loc)
             }
           }
-          if !(closed) || digits == 0 || digits > 6 || acc > 0x10FFFFU {
+          if !closed || digits == 0 || digits > 6 || acc > 0x10FFFFU {
             raise malformed_string(raw, loc)
           }
           buf.write_char(acc.reinterpret_as_int().unsafe_to_char())
@@ -104,7 +104,7 @@ fn hex_pair(hi : Char, lo : Char) -> Byte? {
 fn malformed_string(raw : String, loc : @basic.Location) -> Diag {
   Diag(
     code=JBadLiteral,
-    loc=loc,
+    loc~,
     message="malformed escape sequence in string literal \"\{raw}\"",
     help=None,
     path="",

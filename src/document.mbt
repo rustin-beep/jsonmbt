@@ -18,14 +18,14 @@ fn syntax_diag(r : @basic.Report, path : String) -> Diag {
     help=Some(
       "keep the file valid MoonBit: struct defs + one top-level pub let of literals",
     ),
-    path=path,
+    path~,
   )
 }
 
 ///|
 fn analyze(
   src : String,
-  path~ : String = "",
+  path? : String = "",
   expected_name? : String,
 ) -> Doc raise Diag {
   let (impls, reports) = @parser.parse_string(src, name=path)
@@ -52,7 +52,7 @@ fn analyze(
                 help=Some(
                   "one .json.mbt file degrades to exactly one JSON document (D-7)",
                 ),
-                path=path,
+                path~,
               )
             }
           _ =>
@@ -63,7 +63,7 @@ fn analyze(
               help=Some(
                 "internal bindings arrive with L2; today the file is one pub let of literals",
               ),
-              path=path,
+              path~,
             )
         }
       other =>
@@ -74,7 +74,7 @@ fn analyze(
           help=Some(
             "a .json.mbt file contains struct definitions and one pub let — nothing else",
           ),
-          path=path,
+          path~,
         )
     }
   }
@@ -88,7 +88,7 @@ fn analyze(
         help=Some(
           "add `pub let <file-stem> = ...` — the file degrades to one JSON document",
         ),
-        path=path,
+        path~,
       )
   }
   // D-7 stem 命名：config.json.mbt → pub let config（stdin 免检——无文件名）
@@ -99,21 +99,19 @@ fn analyze(
       if binder.name != expect {
         raise Diag(
           code=JStemMismatch,
-          loc=loc,
+          loc~,
           message="top-level binding is '\{binder.name}' but the file stem is '\{expect}'",
           help=Some(
             "rename the binding (or the file) so they match — this keeps one name per document",
           ),
-          path=path,
+          path~,
         )
       }
     None => ()
   }
   // 类型头预检（J2007）：struct 字段与 root 注解中不受支持的类型先于值校验报出
   let defs : Array[StructDef] = []
-  structs.each(
-    fn(_, v) { defs.push(v) },
-  )
+  structs.each(fn(_, v) { defs.push(v) })
   for sd in defs {
     for f in sd.fields {
       scan_supported_type(f.1, f.2)
@@ -126,7 +124,7 @@ fn analyze(
     }
     None => None
   }
-  { structs: structs, root_expr: expr, root_ty: root_ty }
+  { structs, root_expr: expr, root_ty, }
 }
 
 ///|
@@ -136,7 +134,7 @@ fn scan_supported_type(t : JType, loc : @basic.Location) -> Unit raise Diag {
     JTUnsupported(_) =>
       raise Diag(
         code=JBadFieldType,
-        loc=loc,
+        loc~,
         message="field type is outside the L0 subset",
         help=Some(
           "supported field types: Int/Int64/Double/String/Bool/Option[T]/Array[T]/Map[String,T]/struct",
@@ -187,7 +185,7 @@ fn impl_loc(i : @syntax.Impl) -> @basic.Location {
 ///|
 fn dummy_loc() -> @basic.Location {
   {
-    start: { fname: "", lnum: 1, bol: 0, cnum: 0 },
-    end: { fname: "", lnum: 1, bol: 0, cnum: 0 },
+    start: { fname: "", lnum: 1, bol: 0, cnum: 0, },
+    end: { fname: "", lnum: 1, bol: 0, cnum: 0, },
   }
 }

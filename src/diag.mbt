@@ -8,6 +8,7 @@ pub(all) enum JCode {
   JIO // J0002 IO 错（读写失败）
   JSyntax // J1001 .json.mbt 语法错（parser Report）
   JJsonSyntax // J1002 JSON 输入语法错（对拍/N 的 JSON 侧输入；importer 同族复用）
+  JDupKey // J1003 JSON 重复键（病态输入，不替它选语义——D-11）
   JNoDoc // J2001 缺顶层 pub let（D-7）
   JMultiDoc // J2002 多个顶层 pub let（D-7）
   JStemMismatch // J2003 pub let 名与文件 stem 不符（D-7；stdin 免）
@@ -22,6 +23,15 @@ pub(all) enum JCode {
   JUnknownField // J3005 未知字段（struct 无此字段）
   JMissingField // J3006 缺必填字段
   JDupField // J3007 重复字段
+  JEmptyArr // J4001 孤立空数组：元素类型无线索（D-1 阻断，两级启发后仍无解）
+  JEmptyObj // J4002 空对象：无字段可推（D-1 空对象单独形态）
+  JAllNull // J4003 全 null：Option 基型无信息（D-1 家族）
+  JHeteroArr // J4010 异构数组（元素类型不相容）
+  JMixedKeys // J4011 异值键对象：Map 逃生门不适用，请人工建模 struct
+  JHeteroField // J4012 字段跨样本类型不相容
+  JBigNum // J4020 超 Int64 整数（D-2 诚实拒绝；字符串化是显式 opt-in）
+  JTaggedEnumHint // J4030 疑似 tagged-enum 提示（hint 级，rc 0，建议手写 enum）
+  JDrift // J5001 --check 检测到漂移（rc 2——D-10 有义分叉，diff 族同段扩展）
 }
 
 ///|
@@ -31,6 +41,7 @@ pub fn JCode::num(self : JCode) -> String {
     JIO => "J0002"
     JSyntax => "J1001"
     JJsonSyntax => "J1002"
+    JDupKey => "J1003"
     JNoDoc => "J2001"
     JMultiDoc => "J2002"
     JStemMismatch => "J2003"
@@ -45,15 +56,26 @@ pub fn JCode::num(self : JCode) -> String {
     JUnknownField => "J3005"
     JMissingField => "J3006"
     JDupField => "J3007"
+    JEmptyArr => "J4001"
+    JEmptyObj => "J4002"
+    JAllNull => "J4003"
+    JHeteroArr => "J4010"
+    JMixedKeys => "J4011"
+    JHeteroField => "J4012"
+    JBigNum => "J4020"
+    JTaggedEnumHint => "J4030"
+    JDrift => "J5001"
   }
 }
 
 ///|
-/// rc（D-10 五值表）：4 = 用法·IO 错；1 = 输入错（校验/类型错）。
-/// rc=2（检测到漂移/差异）属 P1.5 幂等闸与 diff，P1 未占用。
+/// rc（D-10 五值表）：4 = 用法·IO 错；1 = 输入错（校验/类型错）；
+/// 2 = 检测到漂移/差异（import --check / diff，P1.5 起占用）；hint 级码 rc 0。
 pub fn JCode::exit_code(self : JCode) -> Int {
   match self {
     JUsage | JIO => 4
+    JTaggedEnumHint => 0
+    JDrift => 2
     _ => 1
   }
 }
@@ -65,8 +87,8 @@ pub(all) suberror Diag {
     loc~ : @basic.Location,
     message~ : String,
     help~ : String?,
-    path~ : String, // loc.start.fname 为空时的兜底显示名
-  )
+    path~ : String
+  ) // loc.start.fname 为空时的兜底显示名
 }
 
 ///|
@@ -82,11 +104,7 @@ fn pos_of(loc : @basic.Location) -> (Int, Int) {
 pub fn Diag::render(self : Diag) -> String {
   if self is Diag(code~, loc~, message~, help~, path~) {
     let (line, col) = pos_of(loc)
-    let fname = if loc.start.fname != "" {
-      loc.start.fname
-    } else {
-      path
-    }
+    let fname = if loc.start.fname != "" { loc.start.fname } else { path }
     let head = "jsonmbt: error [\{code.num()}] \{fname}:\{line}:\{col} \{message}"
     match help {
       Some(h) => head + "\n  help: " + h

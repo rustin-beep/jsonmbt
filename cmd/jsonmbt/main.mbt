@@ -4,6 +4,7 @@
 // build 产物走文件（默认同名 .json）或 stdout（stdin `-` 时）；原子写 = 临时文件 + rename；
 // 校验先行失败零产物（check = build 的 dry-run——同一条校验路径）
 
+///|
 fn write_stderr(s : String) -> Unit {
   jsonmbt_write_stderr(@unicode.to_utf8_bytes(s), s.length())
 }
@@ -15,17 +16,137 @@ fn usage() -> Int {
     "usage:\n" +
     "  jsonmbt build <file.json.mbt...|-> [-o <out.json>]\n" +
     "  jsonmbt check <file.json.mbt...|->\n" +
+    "  jsonmbt import <file.json|-> [-o <out.json.mbt>] [--check]\n" +
     "degrade: .json.mbt -> .json (deterministic, compact); `-` reads stdin\n" +
-    "build from stdin writes the product to stdout; rc: 0 ok / 1 input error / 4 usage/IO",
+    "ingest: .json/.jsonc -> .json.mbt (shape inference); --check = idempotence gate\n" +
+    "rc: 0 ok / 1 input error / 2 drift detected (--check) / 4 usage/IO",
   )
   4
 }
 
 ///|
+/// hint 渲染（rc-0 提示走 stderr；前缀 jsonmbt: hint——机器可读同 D-10 纪律）
+fn print_hint(e : @src.Diag) -> Unit {
+  write_stderr(
+    e.render().replace(old="jsonmbt: error [", new="jsonmbt: hint ["),
+  )
+}
+
+///|
+/// 行尾归一（CRLF→LF）后比对（纪律 11：幂等闸的比对口径）
+fn normalize_eol(s : String) -> String {
+  s.replace(old="\r\n", new="\n")
+}
+
+///|
+/// 输入文件名 → stem（去最后扩展名）
+fn json_stem_of(path : String) -> String? {
+  let base = basename(path)
+  let dot = base.rev_find(".")
+  match dot {
+    Some(i) => if i > 0 { Some(base[:i].to_owned()) } else { None }
+    None => Some(base)
+  }
+}
+
+///|
+fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
+  let src = read_input(path) catch {
+    e =>
+      if e is @src.Diag(..) {
+        return print_diag_exit(e)
+      } else {
+        write_stderr("jsonmbt: error [J0002] cannot read '\{path}'")
+        return 4
+      }
+  }
+  // stem：文件名去扩展；stdin 必须配 -o（从 -o 取 stem——D-7 命名同源）
+  let display = if path == "-" { "<stdin>" } else { path }
+  let stem = if path == "-" {
+    match out_opt {
+      Some(o) =>
+        match json_stem_of(o) {
+          Some(s) => s
+          None => {
+            write_stderr(
+              "jsonmbt: error [J0001] -o needs a file name to derive the stem from",
+            )
+            return 4
+          }
+        }
+      None => {
+        write_stderr(
+          "jsonmbt: error [J0001] importing stdin requires -o <out.json.mbt>",
+        )
+        return 4
+      }
+    }
+  } else {
+    match json_stem_of(path) {
+      Some(s) => s
+      None => {
+        write_stderr("jsonmbt: error [J0001] '\{path}' has no usable stem")
+        return 4
+      }
+    }
+  }
+  let outcome = @src.import_source(src, path=display, stem~) catch {
+    e =>
+      if e is @src.Diag(..) {
+        return print_diag_exit(e)
+      } else {
+        write_stderr("jsonmbt: error [J0002] internal: non-Diag error")
+        return 4
+      }
+  }
+  for h in outcome.hints {
+    print_hint(h)
+  }
+  let target = match out_opt {
+    Some(o) => o
+    None => path[:path.length() - ext_len(path)].to_owned() + ".json.mbt"
+  }
+  if check {
+    // 幂等闸（纪律 11）：重算产物与磁盘比对（行尾归一）；漂移 rc 2（D-10）
+    let existing = Some(@fs.read_file_to_string(target)) catch { _ => None }
+    let up_to_date = match existing {
+      Some(disk) => normalize_eol(disk) == normalize_eol(outcome.content)
+      None => false
+    }
+    if up_to_date {
+      return 0
+    }
+    write_stderr(
+      "jsonmbt: error [J5001] '\{target}' is not up to date with '\{display}' (import --check)",
+    )
+    write_stderr("  help: re-run: jsonmbt import \{display}")
+    return 2
+  }
+  if path == "-" {
+    println(outcome.content)
+    return 0
+  }
+  atomic_write(target, outcome.content) catch {
+    e => if e is @src.Diag(..) { return print_diag_exit(e) } else { return 4 }
+  }
+  0
+}
+
+///|
+fn ext_len(path : String) -> Int {
+  let base = basename(path)
+  let dot = base.rev_find(".")
+  match dot {
+    Some(i) => base.length() - i
+    None => 0
+  }
+}
+
+///|
 fn dummy_loc() -> @basic.Location {
   {
-    start: { fname: "", lnum: 1, bol: 0, cnum: 0 },
-    end: { fname: "", lnum: 1, bol: 0, cnum: 0 },
+    start: { fname: "", lnum: 1, bol: 0, cnum: 0, },
+    end: { fname: "", lnum: 1, bol: 0, cnum: 0, },
   }
 }
 
@@ -71,9 +192,7 @@ fn read_input(path : String) -> String raise @src.Diag {
   if path == "-" {
     @unicode.to_utf8_string(jsonmbt_read_stdin())
   } else {
-    try {
-      @fs.read_file_to_string(path)
-    } catch {
+    @fs.read_file_to_string(path) catch {
       _ => raise io_diag("cannot read '\{path}'")
     }
   }
@@ -83,17 +202,13 @@ fn read_input(path : String) -> String raise @src.Diag {
 /// 原子写（D-8 ③）：同目录临时文件 + rename；失败清理临时文件
 fn atomic_write(target : String, content : String) -> Unit raise @src.Diag {
   let tmp = target + ".jsonmbt-tmp"
-  try {
-    @fs.write_string_to_file(tmp, content)
-  } catch {
+  @fs.write_string_to_file(tmp, content) catch {
     _ => raise io_diag("cannot write '\{tmp}'")
   }
   let from_b = @unicode.to_utf8_bytes(tmp)
   let to_b = @unicode.to_utf8_bytes(target)
   if jsonmbt_rename(from_b, from_b.length(), to_b, to_b.length()) != 0 {
-    try {
-      @fs.remove_file(tmp)
-    } catch {
+    @fs.remove_file(tmp) catch {
       _ => ()
     }
     raise io_diag("cannot finalize '\{target}' (rename failed)")
@@ -112,12 +227,13 @@ fn main_rc() -> Int {
     return usage()
   }
   let verb = args[1]
-  if verb != "build" && verb != "check" {
+  if verb != "build" && verb != "check" && verb != "import" {
     write_stderr("jsonmbt: error [J0001] unknown command '\{verb}'")
     return 4
   }
   let paths : Array[String] = []
   let mut out_opt : String? = None
+  let mut do_check = false
   let mut i = 2
   while i < args.length() {
     let a = args[i]
@@ -128,6 +244,9 @@ fn main_rc() -> Int {
       }
       out_opt = Some(args[i + 1])
       i = i + 2
+    } else if a == "--check" {
+      do_check = true
+      i = i + 1
     } else if a == "-h" || a == "--help" {
       return usage()
     } else {
@@ -138,19 +257,27 @@ fn main_rc() -> Int {
   if paths.length() == 0 {
     return usage()
   }
-  // stdin `-` 只允许单输入；文件路径必须 .json.mbt 后缀（防误伤源文件）
+  // stdin `-` 只允许单输入；build/check 的文件路径必须 .json.mbt 后缀（防误伤）
   for p in paths {
     if p == "-" {
       if paths.length() > 1 {
-        write_stderr("jsonmbt: error [J0001] '-' (stdin) must be the only input")
+        write_stderr(
+          "jsonmbt: error [J0001] '-' (stdin) must be the only input",
+        )
         return 4
       }
-    } else if stem_of(p) is None {
+    } else if verb != "import" && stem_of(p) is None {
       write_stderr(
         "jsonmbt: error [J0001] '\{p}' is not a .json.mbt file (use `-` for stdin)",
       )
       return 4
     }
+  }
+  if verb == "import" {
+    if paths.length() != 1 {
+      return usage()
+    }
+    return run_import(paths[0], out_opt, do_check)
   }
   if paths.length() > 1 && out_opt is Some(_) {
     write_stderr("jsonmbt: error [J0001] -o accepts a single input")
@@ -168,9 +295,7 @@ fn main_rc() -> Int {
 
 ///|
 fn run_one(verb : String, path : String, out_opt : String?) -> Int {
-  let src = try {
-    read_input(path)
-  } catch {
+  let src = read_input(path) catch {
     e =>
       if e is Diag(..) {
         return print_diag_exit(e)
@@ -183,9 +308,7 @@ fn run_one(verb : String, path : String, out_opt : String?) -> Int {
   let display = if path == "-" { "<stdin>" } else { path }
   // check = build 的 dry-run（同一条校验路径——D-8）
   if verb == "check" {
-    try {
-      @src.check_source(src, path=display, expected_name?)
-    } catch {
+    @src.check_source(src, path=display, expected_name?) catch {
       e =>
         if e is Diag(..) {
           return print_diag_exit(e)
@@ -197,9 +320,7 @@ fn run_one(verb : String, path : String, out_opt : String?) -> Int {
     return 0
   }
   // build：校验先行，失败零产物（D-8 ①）
-  let product = try {
-    @src.build_source(src, path=display, expected_name?)
-  } catch {
+  let product = @src.build_source(src, path=display, expected_name?) catch {
     e =>
       if e is Diag(..) {
         return print_diag_exit(e)
@@ -212,36 +333,19 @@ fn run_one(verb : String, path : String, out_opt : String?) -> Int {
   if path == "-" {
     match out_opt {
       Some(o) =>
-        try {
-          atomic_write(o, product)
-        } catch {
-          e =>
-            if e is Diag(..) {
-              return print_diag_exit(e)
-            } else {
-              return 4
-            }
+        atomic_write(o, product) catch {
+          e => if e is Diag(..) { return print_diag_exit(e) } else { return 4 }
         }
-      None => {
-        println(product)
-      }
+      None => println(product)
     }
     return 0
   }
   let target = match out_opt {
     Some(o) => o
-    None =>
-      path[:path.length() - ".json.mbt".length()].to_owned() + ".json"
+    None => path[:path.length() - ".json.mbt".length()].to_owned() + ".json"
   }
-  try {
-    atomic_write(target, product)
-  } catch {
-    e =>
-      if e is Diag(..) {
-        return print_diag_exit(e)
-      } else {
-        return 4
-      }
+  atomic_write(target, product) catch {
+    e => if e is Diag(..) { return print_diag_exit(e) } else { return 4 }
   }
   0
 }

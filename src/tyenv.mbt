@@ -16,6 +16,8 @@ priv enum JType {
   JTMap(JType, JType) // K 仅接受 String（JSON 键即字符串；Map 逃生门适用面）
   JTStruct(String)
   JTUnsupported(String) // 表达了但 L0 不支持的类型（Unit/Arrow/Tuple/Any/未知名…）
+  JTEmpty // 推断器内部中间态：空容器元素占位（推断定稿前消除，不进校验器）
+  JTNullLike // 推断器内部中间态：值位 null 的占位（聚合前消除）
 } derive(Eq)
 
 ///|
@@ -31,6 +33,8 @@ fn JType::show(self : JType) -> String {
     JTMap(k, v) => "Map[\{k.show()}, \{v.show()}]"
     JTStruct(n) => n
     JTUnsupported(s) => s
+    JTEmpty => "?"
+    JTNullLike => "null"
   }
 }
 
@@ -44,7 +48,7 @@ priv struct StructDef {
 /// 从顶层声明收集 struct 定义。不认识的 TypeDecl 形态（enum/alias/abstract…）
 /// 不进表——引用到时按 JTUnsupported 报；顶层混入非 struct 声明由 document 层把关。
 fn collect_structs(
-  impls : @list.List[@syntax.Impl]
+  impls : @list.List[@syntax.Impl],
 ) -> Map[String, StructDef] raise Diag {
   let env : Map[String, StructDef] = Map([])
   for i in impls {
@@ -68,7 +72,7 @@ fn collect_structs(
             for f in fields {
               fs.push((f.name.label, parse_type(f.ty), f.loc))
             }
-            env[name] = { name: name, fields: fs }
+            env[name] = { name, fields: fs, }
           }
           _ => () // 非 record 形态的 TypeDecl：引用到时再报
         }
@@ -101,8 +105,12 @@ fn parse_type(t : @syntax.Type) -> JType {
         ("Bool", 0) => JTBool
         ("Array", 1) => JTArray(parse_type(params[0]))
         ("Map", 2) => JTMap(parse_type(params[0]), parse_type(params[1]))
-        ("Unit", 0) | ("Byte", 0) | ("Char", 0) | ("UInt", 0) | ("UInt64", 0) | ("Float", 0) =>
-          JTUnsupported(type_show_of(t)) // 有 MoonBit 定义但 JSON 无对应/非 L0 的内建
+        ("Unit", 0)
+        | ("Byte", 0)
+        | ("Char", 0)
+        | ("UInt", 0)
+        | ("UInt64", 0)
+        | ("Float", 0) => JTUnsupported(type_show_of(t)) // 有 MoonBit 定义但 JSON 无对应/非 L0 的内建
         (_, 0) => JTStruct(id) // 自定义 struct（无参裸名）；未定义名由 lookup_struct 报
         _ => JTUnsupported(type_show_of(t))
       }

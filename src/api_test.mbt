@@ -25,8 +25,15 @@ test "smoke : 全类型正样本端到端" {
     #|  backup: true,
     #|  retries: None,
     #|}
-  let out = @src.build_source(src, path="server.json.mbt", expected_name="server")
-  inspect(out, content="{\"port\":8080,\"host\":\"a\\\"b\\\\c\\né\",\"ratio\":1.5e3,\"big\":9223372036854775807,\"tags\":[\"x\",\"y\"],\"meta\":{\"Content-Type\":\"text/plain\"},\"backup\":true,\"retries\":null}")
+  let out = @src.build_source(
+    src,
+    path="server.json.mbt",
+    expected_name="server",
+  )
+  inspect(
+    out,
+    content="{\"port\":8080,\"host\":\"a\\\"b\\\\c\\né\",\"ratio\":1.5e3,\"big\":9223372036854775807,\"tags\":[\"x\",\"y\"],\"meta\":{\"Content-Type\":\"text/plain\"},\"backup\":true,\"retries\":null}",
+  )
 }
 
 ///|
@@ -66,7 +73,10 @@ test "smoke : 负样本 fail loud（J3001 函数调用不兜底 null）" {
   } catch {
     e => e.render()
   }
-  inspect(d, content="jsonmbt: error [J3001] t.json.mbt:6:6 arithmetic expression is outside the L0 pure-literal subset\n  help: use a literal value (record, array, map, or scalar); for anything computed, write real MoonBit instead")
+  inspect(
+    d,
+    content="jsonmbt: error [J3001] t.json.mbt:6:6 arithmetic expression is outside the L0 pure-literal subset\n  help: use a literal value (record, array, map, or scalar); for anything computed, write real MoonBit instead",
+  )
 }
 
 ///|
@@ -76,7 +86,11 @@ test "正样本 : 顶层自由值（标量/数组/Map，无 struct 头）" {
     content="42",
   )
   inspect(
-    @src.build_source("pub let t = [1, \"a\", true, None]", path="t.json.mbt", expected_name="t"),
+    @src.build_source(
+      "pub let t = [1, \"a\", true, None]",
+      path="t.json.mbt",
+      expected_name="t",
+    ),
     content="[1,\"a\",true,null]",
   )
   inspect(
@@ -99,7 +113,10 @@ test "正样本 : 空容器/空串/None/Some 嵌套" {
     #|  "none": None,
     #|  "some_arr": Some([1]),
     #|}
-  inspect(@src.build_source(src, path="t.json.mbt"), content="{\"empty_arr\":[],\"empty_obj\":{},\"empty_str\":\"\",\"none\":null,\"some_arr\":[1]}")
+  inspect(
+    @src.build_source(src, path="t.json.mbt"),
+    content="{\"empty_arr\":[],\"empty_obj\":{},\"empty_str\":\"\",\"none\":null,\"some_arr\":[1]}",
+  )
 }
 
 ///|
@@ -167,16 +184,14 @@ test "D-11 等价锚 : N(build(x)) == N(J)（值语义等价）" {
   // 三对：全类型 / Map+Option / 指数展开（1.5e3 ≡ 1500.0 双 Double 相等）
   let pairs : Array[(String, String)] = [
     (
-      "pub let t = { \"a\": 1, \"b\": \"x\", \"c\": [1, 2], \"d\": None }",
-      "{\"a\":1,\"b\":\"x\",\"c\":[1,2],\"d\":null}",
+      "pub let t = { \"a\": 1, \"b\": \"x\", \"c\": [1, 2], \"d\": None }", "{\"a\":1,\"b\":\"x\",\"c\":[1,2],\"d\":null}",
     ),
     (
       "struct S {\n  o : Int?\n  m : Map[String, Int]\n}\npub let t : S = S::{ o: Some(3), m: { \"k\": 9 } }",
       "{\"o\":3,\"m\":{\"k\":9}}",
     ),
     (
-      "pub let t = { \"x\": 1.5e3, \"y\": 1500.0 }",
-      "{\"x\":1500.0,\"y\":1500.0}",
+      "pub let t = { \"x\": 1.5e3, \"y\": 1500.0 }", "{\"x\":1500.0,\"y\":1500.0}",
     ),
   ]
   for pair in pairs {
@@ -196,11 +211,15 @@ test "D-11 双维度锚 : 值语义 1 ≡ 1.0（N 层）；降级文本 1 ≠ 1.
   inspect(a, content=b)
   inspect(a, content="{\"v\":1}")
   // build 层：源文本直传（类型头是压缩侧元信息，不改写值文本——PLAN §0）
-  let s1 = @src.build_source("pub let t = 1", path="t.json.mbt", expected_name="t")
+  let s1 = @src.build_source(
+    "pub let t = 1",
+    path="t.json.mbt",
+    expected_name="t",
+  )
   let s2 = @src.build_source(
-      "pub let t = 1.0",
-      path="t.json.mbt",
-      expected_name="t",
-    )
+    "pub let t = 1.0",
+    path="t.json.mbt",
+    expected_name="t",
+  )
   inspect(s1 == s2, content="false")
 }

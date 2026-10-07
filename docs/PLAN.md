@@ -1,6 +1,6 @@
 # jsonmbt — typed JSON source files for MoonBit（.json.mbt）
 
-> 状态：**计划书 v0.3.1**（2026-10-06 立项，同日四轮修订：v0.2 importer 探针+竞品矩阵；v0.3 压缩比/YAML·TOML/真实数据压测/D 系终案/Go 直产；**v0.3.1 入口语义 D-7~D-11 + build 不变量 + 规范化器锚 + 勘误**）· **状态唯一载体 = §5 里程碑表**（本文件其他处不写进度时点句）
+> 状态：**计划书 v0.4.0**（2026-10-06 立项，同日四轮修订 v0.2/v0.3/v0.3.1；**2026-10-07 v0.4.0 定位与防御体系升级**：§0 护城河三件套 + 失效判据 / §2 质疑裁定表 + typify 覆盖 / §7 R1b 三层止损 + 新增 R7 + §7.1 保险单 / §10 R11 定位可证伪制度 + 结论入仓制度）· **状态唯一载体 = §5 里程碑表**（本文件其他处不写进度时点句）
 > 格式：`.json.mbt` · 包/仓：`rustin-beep/jsonmbt` · CLI：`jsonmbt`
 
 ---
@@ -11,7 +11,17 @@
 
 **第一性原理（压缩/解压模型）**：`.json.mbt` 是浓缩语言，`build` 降级是解压，`import` 是压缩。**解压对值无损且确定；类型头/注释是压缩侧元信息，不进解压契约**（元信息留在源格式里持续生效是特性非缺陷——TS 编译成 JS 也"丢"类型，没人说 TS 有损）——本规范全部边界裁定由此推出：空数组=压缩时信息不足（诚实标注）；Int64=压缩时选更大容器（无损优先）；字符串化=改数据本身（违反值无损契约，只能显式 opt-in）。
 
-**排他性定位（形态先例矩阵的唯一空位）**：数据格式的工具链 = **真实语言的工具链**——Jsonnet/CUE/Dhall/Nickel/KCL 全部为 fmt/LSP/IDE 自建全套（Dhall 的采用瓶颈即「集成、工具链、LSP 的完整体验」），jsonmbt 的 fmt/check/info/LSP 零成本继承 moon；加上求值分级（L0–L2 冻结条款）对功能蔓延的免疫。**逃生门原则**：json.mbt 表达不了的，写真 MoonBit 去（FFI/.wat 皆可）——那是隔壁房间，不是本格式的扩张理由；逃生门的存在让分级冻结变得可坚持（Go 的 cgo/汇编同理；Jsonnet 死于没有逃生门——所有需求都涌进 DSL 本体）。
+**排他性定位（形态先例矩阵的唯一空位）——三条腿同时成立才排他**：
+
+1. **工具链白嫖**：数据格式的工具链 = **真实语言的工具链**。Jsonnet/CUE/Dhall/Nickel/KCL 全部为 fmt/LSP/IDE 自建全套（Dhall 的采用瓶颈即「集成、工具链、LSP 的完整体验」），jsonmbt 的 fmt/check/info/LSP 零成本继承 moon。
+   **⚠ 此腿可被复制**：`config.rs` + 一个百行抽取器即可在 Rust 复现同款白嫖（`rustc`/`rustfmt`/`rust-analyzer` 照样免费）。**它是入场券，不是护城河。**
+   *失效判据*：moon 对 `.json.mbt` 形态文件停止 check/fmt/LSP；或宿主语言删除 L0 所需语法 ≥1 处。
+2. **受限子集的制度保证**：L0–L2 冻结使「任何人都不可能把逻辑塞进数据文件」成为**制度性事实**，逃生门原则承接溢出需求——通用语言给不了这一条。
+   *失效判据*：某通用语言生态出现被广泛采用的等价制度性冻结实践。
+3. **「文件 = 文档」格式法（D-7）**：一个 `.json.mbt` 恰好一个顶层 `pub let`。「从 `.rs`/`.go` 生成 JSON」**没有确定宾语**——这是通用语言结构上给不出的。
+   *失效判据*：某通用语言工具链官方引入「文件级单文档」约定。
+
+**求值分级冻结（L0–L2）是腿 2/3 的看门人**：白嫖只要求「子集」（`if`/函数也是合法 MoonBit，工具链白嫖能扛很久）；**先崩的是确定性降级**——降级器要么开始求值（= 造语言运行时），要么按 D-8 ② 拒绝；`let`/条件一旦能跨文件或带副作用，「这个文件的 JSON」无法定义（D-7 失守）。**逃生门原则**：json.mbt 表达不了的，写真 MoonBit 去（FFI/.wat 皆可）——那是隔壁房间，不是本格式的扩张理由；逃生门的存在让分级冻结变得可坚持（Go 的 cgo/汇编同理；Jsonnet 死于没有逃生门——所有需求都涌进 DSL 本体）。
 
 ## 1. 是什么
 
@@ -47,10 +57,19 @@
    | **TypeScript satisfies** | `const x = {...} satisfies T` | TS 主流实践 | **需求存在最强证据**：类型化数据文件是真需求；jsonmbt 补上它缺的确定性降级一环 |
 
 2. **JSON→MoonBit 类型推断有人做过但形态不构成威胁**：[gmlewis/json-to-moonbit](https://github.com/gmlewis/json-to-moonbit)——停更两年（toolchain 锚 2024-09）、1 star、纯片段生成器、**无「转回 JSON」闭环**。方向被验证过；差异化恰在「源格式 + 闭环」。
-3. **schema 赛道四玩家全部错位**：typify.mbt、mizchi/jsonschema（5K 下载，**明确不支持从样本推断**——API 面已核实）、MoonJTD、moon_zod。输入全是 schema 不是数据文件。quicktype 的 20+ 目标语言无 MoonBit。`jsonmbt schema` 导出（P2）后四玩家变下游。
+3. **schema 赛道四玩家全部错位**：typify.mbt、mizchi/jsonschema（5K 下载，**明确不支持从样本推断**——API 面已核实）、MoonJTD、moon_zod。输入全是 schema 不是数据文件。quicktype 的 20+ 目标语言无 MoonBit。`jsonmbt schema` 导出（P2）后四玩家变下游。**下游消费者另加 Rust 侧 `typify`（JSON Schema → Rust 类型）**——注意 **S → 各语言类型这一段已被 typify 占住**，jsonmbt 的差异化只在 **D（数据）→ S** 这一段，勿以为能独占整条链。
 4. **vs YAML/TOML（人写配置在位霸主）——不同价值轴**：① **产物轴**（最硬）：YAML/TOML 的产物是自己；.json.mbt 的产物是 **JSON**——API 快照/testdata/CI 数据等「终态必须是 JSON」的场景 YAML 根本不参赛；② 类型轴：无 schema 无类型 vs 类型即文件头；③ 坑位对照：YAML 的 Norway 问题/隐式转换/缩进敏感、TOML 深嵌套 `[a.b.c]`/`[[x]]` 都是要学的语法——「不用学」是神话，区别只在显性还是踩坑式；④ 工具链轴：每语言生态各养解析器 vs 白嫖 moon 全家桶。
 5. **「要学 MoonBit 子集」的反驳**：学的不是 MoonBit 是五个形态（struct/let/T::{}、[...]、四标量）；值体与 JSON 同构度高（`{port: 443}` ≈ `{"port": 443}`）；**语法由工具承载**——importer 生成类型头，人只改值；类型头兼职 schema 文档（JSON 要等价能力得额外学 JSON Schema，难十倍）。
 6. **工具链维护税外包** + **命名三界无主**（`.json.mbt` 源格式 + 降级闭环 + 工具链白嫖的组合确认无主）。
+7. **常见质疑与裁定（四轮外部评审收敛，2026-10-07）**——同类质疑直接引用本表，不再重跑：
+
+   | 质疑 | 裁定 | 一手依据 |
+   |---|---|---|
+   | 选错宿主语言，Rust/Go 工程上更优 | **否** | §0 腿 1 可复制、腿 2/3 不可复制；换宿主 = 换产品 |
+   | Rust/Go 生态同类工具全是反方向，需求不存在 | **部分否** | `go2cfg`（Go struct → jsonc/toml/yaml）即**正向**工具，缺口 = 生成一次即与类型脱钩；Go 世界的正向需求由 HCL/Jsonnet/CUE 承接（后两者参考实现即 Go）。真正空缺原因是**结构性**（§0 腿 3） |
+   | 依赖 `moonbitlang/parser` 非公开 AST，不可持续 | **爆炸半径小** | 0.3.18→0.4.3 全接口 diff 96 行；本仓触及 10 类型中 7 个零变化、3 个仅加字段（被 `..` 吸收）——破坏性变更 0 次 |
+   | 白嫖只是趁 MoonBit 工具链未固化，生态成熟即关窗 | **否** | TypeScript 十年反例（`const x = {...} satisfies T` / `.js` + `// @ts-check` / `tsconfig.json`）；成熟通常意味着 breaking 更少 |
+   | `.mbti`/`.mbtx`/`.mbt.md` 等后缀可否扩展 | **见 §9 探针存档** | 仅 `.<name>.mbt.md` 候选（须 §8 评审；与 D-7 基数冲突需先定形态规则）；`.mbti` 只作 **schema 出口**（`moon info` 白嫖）；`.mbty` 与 `moon.pkg` pre-build 否决 |
 
 ## 3. 对谁（受众漏斗）
 
@@ -92,8 +111,8 @@
 |---|---|---|---|
 | P0 探针 | 生态扫描 + moon 四件套行为矩阵 + 类型诊断采样 + parser→JSON 管道 + importer 探针四件（label 矩阵/推断原型/大文件性能/**null→Option·Int64·Map 三映射**）+ 竞品深扫 + **Vitro 真实数据两轮压测（44 张 + 冻结分支 2469 张）** | 管道输出合法 JSON；合成+真实+档案三层数据全测，REJECT 全部落在已实锤逃生门内 | ✅ 2026-10-06 |
 | P1 MVP | L0 子集校验 + 降级输出器 + CLI（`build/check`，stdin `-` 约定，**D-10 rc/诊断通道契约**，**D-8 三不变量 + check=build dry-run**，**D-7 单文档基数**）+ **D-3 自持 L0 校验器**（伴生自持 fmt）+ 递归深度防护（参照 Vitro 陷阱 #28 wasm 栈预算探针法）+ 正负样本锚（含 D-9 字符串感知三形态 + 控制字符全族转义） | 端到端 `.json.mbt` → `.json` **按 D-11 规范化器 N 值语义等价**；诊断 ≤1 行 + help；**import→build 往返 N 等价锚**；10+ 样本锚 | 🟡 主体落地 2026-10-06：核心库（校验/降级/规范化）+ CLI（rc 0/1/4、stderr 前缀、原子写、stdin）+ moon test 语义锚全绿 + CLI 进程契约手验通过；**余项**：D-9 三形态锚与 import→build 往返锚属 importer 面（随 P1.5）、深度预算 128 待压测校准、层 2 Go 驱动骨架（P1.5 收口） |
-| P1.5 | **importer v1**（形状签名判重 + tagged-enum 识别提示 + D-1 空容器启发 + D-2 Int64 推断落地）+ **`--check` 幂等闸**（flag 包/check 无写副作用/J9 证红）+ **确定性硬锚** + 发 mooncakes 0.2.0 | 确定性锚全绿；check 闸 J9 证红；**Vitro diagnostics 四张试点**（.json.mbt 入仓 + 生成器读降级产物 + Vitro CI 加 `jsonmbt build --check` 步，锁版本） | P1 后 |
-| P2 | **npm 包**（js 出口）+ 在线试玩页（**粘贴 JSON 双向框**）+ **`jsonmbt schema` 导出** + **官方 emitter 微包 jsonmbt-go v1** | 双出口同构输出；npx 可跑；schema 经 ajv/VS Code 实测消费；Vitro 生成器直产试点 | P1.5 后 |
+| P1.5 | **importer v1**（形状签名判重 + tagged-enum 识别提示 + D-1 空容器启发 + D-2 Int64 推断落地）+ **`--check` 幂等闸**（flag 包/check 无写副作用/J9 证红）+ **确定性硬锚** + **AST 面快照入库（R1b-L1）** + **`.json.mbt` 的 struct 一律 `pub`**（换 `moon info` 白嫖完整 schema 出口，见 §2.3）+ 发 mooncakes 0.2.0 | 确定性锚全绿；check 闸 J9 证红；**Vitro diagnostics 四张试点**（.json.mbt 入仓 + 生成器读降级产物 + Vitro CI 加 `jsonmbt build --check` 步，锁版本） | 🟡 主体落地 2026-10-07：importer 全链（D-9 剥离/自持 RFC8259 解析器/形状推断 D-1 两级启发 + D-2 归一/生成）+ CLI import + `--check` 幂等闸（rc 2 首次占用，绿/红双验）+ moon test 49 锚全绿（含往返 N 等价锚）；**余项**：AST 面快照、struct pub 化、发 mooncakes 0.2.0、层 2 Go 驱动骨架、Vitro 四张试点（跨仓） |
+| P2 | **npm 包**（js 出口）+ 在线试玩页（**粘贴 JSON 双向框**）+ **`jsonmbt schema` 导出**（下游清单含 **typify**——S→各语言类型已被占，本仓只做 **D→S**）+ **官方 emitter 微包 jsonmbt-go v1** | 双出口同构输出；npx 可跑；schema 经 ajv/VS Code 实测消费；Vitro 生成器直产试点 | P1.5 后 |
 | P3 | L1/L2 求值分级 + `&` 去重/展开 + **diff 模式**（语义 diff——CI 基线翻转摘要）+ 键集漂移 Option 缺省（v2 观察项转正评估） | L1/L2 探针锚 + diff 人工验收 | P2 后 |
 | P4 生态 | JSON Pointer / json_deriving 联动声明 / 规则手册 / （候选）validate 模式 | — | 远期 |
 
@@ -117,6 +136,8 @@
 | **值树底座** | **core/json 全套复用**（parse 自带深度预算、stringify、write_escaped 控制字符全族转义）；**实测关键校准**：`Json::Number` 的 repr **仅对超 Double 范围大数保留源文本**（out-of-range fallback），常规数字 1 与 1.0 值层不可分——由此 N 定值语义（N 层 1≡1.0）、「1≠1.0 保留」限定为降级输出侧职责（raw 直传），两维度分立 | P1 实装实测；避免自造第二套 JSON 管线 |
 | **J 系错误码首批** | J0001 用法 / J0002 IO / J1001 .json.mbt 语法 / J1002 JSON 输入语法 / J2001–J2007 文档基数与类型头（缺/多 pub let、stem 不符、深度、顶层声明、重复 struct、类型面外）/ J3001–J3007 值面（非 L0、Map 键、无对应字面量、类型不匹配、未知/缺失/重复字段）；**只增不改**（D-10 纪律），每码至少一负样本锚 | P1 实装；定义在 src/diag.mbt |
 | **CLI 进程面** | rc 0/1/4 已占用（2=漂移差异、3=保留，P1.5+）；诊断 = stderr 机器可读前缀；产物 = 紧凑 JSON（默认同名 .json，stdin `-` → stdout）；原子写 = 同目录临时文件 + rename（Windows 侧 remove-后-rename 的微小窗口期登记为平台限制）；文件输入必须 `.json.mbt` 后缀（防误伤） | P1 实装 + 手验（见 §9） |
+| **自持 JSON 解析器** | importer 输入侧不用 core/json（三缺：number 源文本全程保形——core repr 仅超范围保留；重复键拒绝——core 静默后者覆盖；顶层行列诊断）；自持解析器产「全 repr 的 Json 树」与降级器同值模型，N 单源消费 | P1.5 实装实测（core/json lex_number 源码级确认） |
+| **importer 阻断语义** | 单样本 null 字段 = J4003 阻断（Option 基型是信息论边界，多样本聚合是出路——诚实优先于猜测默认）；`--check` 幂等闸：重算与磁盘产物**行尾归一后比对**，漂移 rc 2 + J5001（D-10 有义分叉首次占用）；生成器无时间/版本戳（确定性硬锚前提） | P1.5 实装 |
 | 命名 | 格式 `.json.mbt`（品牌不变量）/ 包+仓 `rustin-beep/jsonmbt` / CLI `jsonmbt` | owner=产品名重合产生定位噪音 |
 | 竞品边界 | gmlewis = 先驱非威胁；schema 四玩家 = 下游；moonjson = "读"；jsonmbt = "写 + 类型 + 工具链 + 闭环"。README 主动声明共存 | 探针扫描 + 先例矩阵 |
 
@@ -125,15 +146,18 @@
 | # | 风险 | 概率 | 对冲 |
 |---|---|---|---|
 | R1 | moon 工具链 breaking 影响 .json.mbt 行为 | 中 | 探针行为矩阵固化为测试锚（P1 起）；moonbit 升级手册同款流程 |
-| **R1b** | **依赖 moonbitlang/parser 的非公开 AST 面**（`@syntax.Expr` 等无兼容承诺——比「工具链一般性变化」更具体更危险） | 中-高 | AST 节点快照测试 + 锁 parser 版本（现锚 0.4.3）+ 每次升级跑行为矩阵；升级红 = 按 AST diff 逐节点定责 |
+| **R1b** | **依赖 moonbitlang/parser 的非公开 AST 面**（`@syntax.Expr` 等无兼容承诺——比「工具链一般性变化」更具体更危险） | 中 | **三层止损**：**L1 默认** = 锁 parser 版本（现锚 0.4.3）+ **AST 面快照入库**（`moon info` diff 即「逐节点定责」）+ 行为矩阵；**L2 机会主义** = `@syntax` 接触面收敛到单文件 extractor（转正条件：≥1 次因 AST 漂移改 `l0`）；**L3 应急** = `moon work` workspace 冻结快照（本地覆盖**已实测生效**，版本不匹配仅告警；上游 Apache-2.0）。**实测爆炸半径**：跨 4 版本（0.3.18→0.4.3）接触面破坏性变更 **0 次** |
 | R2 | 求值分级被"加功能"诱惑突破 | 中（自律） | 分级冻结条款 + 逃生门原则（表达不了的写 MoonBit 去）；Jsonnet 蔓延史佐证；Vitro 诉求分流（语言面分级评审、工具面自由加，自家消费不跳级） |
 | R3 | 大数/转义边角坑 | 高 | 每项进负样本锚；D-2 终案已裁 |
 | R4 | 采用率：用户为何弃 JSON5/JSONC | 存在 | fmt+check+确定性三件套；**satisfies 模式流行度证需求真实**；MoonBit 生态内首发卡位；importer 拆迁移成本。**量化基线（诚实数字）**：冻结分支实测裸 PASS 49%、Vitro 活数据 43%——**采用摩擦约一半是真实的**；对冲 = 三逃生门落地（预期裸 PASS ≈100%）+ JSONC 输入；**P1.5 验收重测两数字，逃生门落地后裸 PASS 仍 <80% 则 R4 升级高危重估定位** |
 | R5 | 官方未来内建 typed-json | 低-中 | 规范与 MoonBit 类型系统深度绑定；即便内建，CLI diff 工具链仍是独立价值 |
 | R6 | 键名合法性天花板（kebab-case/保留字/大写开头） | 高 | Map 逃生门 + 拒绝清单给可行动改名建议；实测：camelCase/snake_case 主流全兼容 + 中文键合法 |
+| **R7** | **宿主语言面膨胀**——moon 新增语法/内建类型，或官方内建 typed-json，使 `.json.mbt` 成为冗余形态或被稀释 | 低-中 | 与 R5 区分：**R5 = 产品被抢，R7 = 格式合法性/定位被稀释**。对冲 = §0 腿 2/3 不依赖宿主语言演进；`schema`/`diff` 工具链的独立价值（同 R5）；迁移预案见 §7.1 |
 | **性能已除名** | 551KB 实测全链 <1.1s（infer 0.03 + fmt 0.29 爆 10888 行 + check 0.74，0 errors）；9 struct/274KB 产物；**「大字面量与 fmt 互踩」的 Vitro 教训不适用于 record 形态** | — | — |
 
 **压缩比实测（双口径）**：大文件 vs pretty JSON = 0.61×（564KB→341KB）、vs 紧凑 JSON = 1.26×、gzip 后 1.05×（传输无差异）；**行数口径（人眼维度）**：大文件 32,990 行 → 10,888 行 = **0.33×**（滚动量降 2/3，fmt 按 84 字节行宽打包 vs JSON 每标量一行的缩进噪音）；小文件多付 6–12 行类型头，换来值体单行内联 + 类型头即 schema 文档。定位语：**「YAML/TOML 是给人读的配置；JSON 是给机器读的数据；.json.mbt 是给机器读的数据的『人写形态』」**。
+
+**§7.1 白嫖失效的 Plan B（保险单）**：与实现语言无关的可移植资产 = **语义层**（校验 / 类型环境 / 规范化 ≈900 行）+ **golden 语料** + **层 2 进程契约**（rc / stdout 字节 / 往返链）。触发条件 = R1 / R1b / R7 任一升级为高；届时按 R1b 的 L3（workspace 冻结）或上游 `Expr::json_repr` 桥路径迁移。**纪律意义**：这张保险单使「换语言」是预算内操作而非灾难——**正因如此，§0 腿 1 才敢被承认"可复制"**。
 
 ## 8. 规范决策点
 
@@ -167,7 +191,14 @@
   - **core 无同步 fs** → x/fs（read/write/remove）+ 自补三桩（stdin 读全量 / stderr 写 / 原子 rename，UTF-8 路径 Windows 侧宽字符转换）；`#cfg(target="native")` 分后端（`backend=` 谓词不存在——实测踩坑）
   - **中文边界**：中文可做字段 label 与 Map 键（P0 已证），**不可做 struct 类型名**（MoonBit 要求大写开头，中文按 lowercase 拒）——类型名英文、键位自由
   - **CLI 进程契约手验通过**（rc 0/1/4 全占、stderr `jsonmbt: error [J3004] path:line:col` + help、D-8 ① 失败零产物不覆盖旧文件、原子写无 tmp 残留、stdin→stdout、两次 build 逐字节一致）
+- **P1.5 前置探针（2026-10-07，生成格式与先例）**：
+  - **moon fmt 格式自由度实测**：多行 record/数组、内联单行（数组元素 record、顶层 record）**全部 fmt-stable**（零改动）；fmt 不折 >84 宽单行值体、不合并多行——fmt 幂等但非唯一，生成器自由选「顶层 record 多行 + 嵌套/元素内联单行」形态（快照锚钉死）
+  - **@generated 形态先例**（Vitro libc_data_gen/error_code_gen）：普通 `//` 注释行 + 禁手改说明；**不写时间/版本戳**（确定性：同输入两次 import 逐字节一致——升级不产噪音 diff）
+  - **core/json lex_number 源码级确认**：repr 仅超 Double 范围 out-of-range fallback 时 Some——number 源文本全程保形必须自持解析器（§6 决策行）
+  - **往返链手验**：import（JSONC 注释样本/Map 逃生门/Int64/Double）→ build 回 .json 键序与数值文本一致；`--check` 幂等 rc 0、改坏产物后 rc 2（J9 证红）；两次 import 逐字节一致
 - 竞品与先例：§2 矩阵
+- **AST 依赖面探针（2026-10-07，R1b 定价依据）**：接触面 = **2 函数 + 10 类型**、**38 处引用**落 6 文件（l0 19 / document 8 / tyenv 6 / diag 2 / unescape 2 / cmd 1）；`constant_shape` 对 `Constant` 13 变体**穷尽列举无 `_`**（上游加字面量变体 = 编译红）；跨版本 `0.3.18→0.4.3` 全接口 diff 96 行（`Expr` 删 `LexMatch`、`LexScan` 加 `streaming~`、`ForEach` 的 `binders~` 改名 `patterns~`），而**本仓触及面破坏性变更 0 次**（7 类型零变化 + 3 类型仅加字段被 `..` 吸收）。`moon work` 本地覆盖**实测生效**（consumer 要 `parser@0.4.3`、工作区成员给本地 `9.9.9` → 仅告警 + 测试通过）
+- **moon 文件种类面探针（2026-10-07，后缀继承）**：moon 按**最后一段扩展名**分派工具链——`data.json.mbt` check/fmt/info 全生效；`doc.json.mbt.md` 的 **fence 被 `moon check` 校验 + `moon test` 执行 + `moon fmt` 归一**，且 fence 编译在**黑盒测试上下文**（与包内同名 `pub let` 不冲突、声明不进 `pkg.generated.mbti`）；`moon run script.json.mbtx` 可跑；**手写 `x.json.mbti` 被静默忽略**；`moon info` 对 `.json.mbt` 包产出 `pub struct` 带字段、priv struct 只有不透明 `type X`。**否决**：`.json.mbti` 源格式 / `.json.mbty` / `moon.pkg` pre-build（语义错配——产物须入仓、可 diff、原子写）
 
 ## 10. 边界声明
 
@@ -178,3 +209,7 @@ jsonmbt 是通用开发工具，**不是教学产品**。`.json` 仍是机读标
 **文档/实现比纪律（R10）**：v0.3.1（~24KB 规范）与实现（探针 68 行）的差距必须在 **P1 验收时清零**——每条 D 系裁定至少落一个测试锚，否则规范降级为草稿。规范先行是 P0 阶段的正常形态，纸面化不是。
 
 **观察项转正制度**：全部观察项（字符串推断 enum / JSON-in-JSON 提示 / JSON Pointer / validate 模式 / D-5）必须带**转正触发条件**（信号 + 阈值 + 转正形态约束），无触发条件的观察项不予登记——防僵尸。
+
+**定位主张可证伪制度（R11）**：§0 的每条护城河腿必须登记**失效判据**（腿 1 = 宿主停止服务该形态/删除 L0 语法；腿 2 = 出现被广泛采用的等价制度性冻结；腿 3 = 通用语言官方引入文件级单文档约定），并随升级复核。**无判据的定位主张不予登记**——防不可仲裁的立场（与「观察项转正制度」同款纪律，延伸到定位面）。
+
+**结论入仓制度**：评审/探针产出的新结论先进 `docs/` 下的**未拍板笔记**，由用户裁定后并入 PLAN 正文；**禁止长期悬空**——悬空笔记在下次 PLAN 修订时清零（本制度本身即因 v0.4.0 前积压三份悬空笔记而立）。

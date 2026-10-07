@@ -18,8 +18,7 @@ fn canon_number_text(n : Double, repr~ : String?) -> String {
   match repr {
     None => n.to_string()
     Some(r) => {
-      let is_plain_int =
-        !(r.contains(".") || r.contains("e") || r.contains("E"))
+      let is_plain_int = !(r.contains(".") || r.contains("e") || r.contains("E"))
       if is_plain_int {
         match numeric_text(r) {
           Ok(t, _) => t
@@ -49,9 +48,7 @@ pub fn normalize_json(j : Json) -> Json {
     }
     Object(o) => {
       let out : Map[String, Json] = Map([])
-      o.each(
-        fn(k, v) { out[k] = normalize_json(v) },
-      )
+      o.each(fn(k, v) { out[k] = normalize_json(v) })
       Json::object(out)
     }
     other => other
@@ -94,17 +91,12 @@ pub fn json_value_equal(a : Json, b : Json) -> Bool {
         return false
       }
       let mut all_eq = true
-      x.each(
-        fn(k, v) {
-          match y.get(k) {
-            Some(v2) =>
-              if !json_value_equal(v, v2) {
-                all_eq = false
-              }
-            None => all_eq = false
-          }
-        },
-      )
+      x.each(fn(k, v) {
+        match y.get(k) {
+          Some(v2) => if !json_value_equal(v, v2) { all_eq = false }
+          None => all_eq = false
+        }
+      })
       all_eq
     }
     _ => false
@@ -115,9 +107,7 @@ pub fn json_value_equal(a : Json, b : Json) -> Bool {
 /// N 的文本形态：JSON 文本 → 规范化紧凑文本（对拍锚与人工检视用）。
 /// 解析深度预算与 L0 同源（core/json 自带 max_nesting_depth）
 pub fn normalize_json_text(text : String) -> String raise Diag {
-  let j = try {
-    @json.parse(text, max_nesting_depth=MAX_DEPTH)
-  } catch {
+  let j = @json.parse(text, max_nesting_depth=MAX_DEPTH) catch {
     e =>
       raise Diag(
         code=JJsonSyntax,

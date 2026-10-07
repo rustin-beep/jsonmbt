@@ -19,11 +19,7 @@ fn num_json(raw : String, loc : @basic.Location) -> Json raise Diag {
       // 透传 core parse 的完整 Number 语义（value+repr：超范围大数自动走
       // out-of-range fallback 保源文本），再把 repr 钉到归一文本 t——
       // 降级输出按 t（源文本直传），值语义归一由 N 侧 canon 负责
-      let parsed : Json? = try {
-        Some(@json.parse(t))
-      } catch {
-        _ => None
-      }
+      let parsed : Json? = Some(@json.parse(t)) catch { _ => None }
       match parsed {
         Some(j) =>
           if j is Number(d, ..) {
@@ -34,7 +30,7 @@ fn num_json(raw : String, loc : @basic.Location) -> Json raise Diag {
         None =>
           raise Diag(
             code=JBadLiteral,
-            loc=loc,
+            loc~,
             message="malformed numeric literal '\{raw}'",
             help=None,
             path="",
@@ -44,7 +40,7 @@ fn num_json(raw : String, loc : @basic.Location) -> Json raise Diag {
     Overflow(t) =>
       raise Diag(
         code=JBadLiteral,
-        loc=loc,
+        loc~,
         message="numeric literal '\{raw}' exceeds Int64 (normalized '\{t}')",
         help=None,
         path="",
@@ -52,7 +48,7 @@ fn num_json(raw : String, loc : @basic.Location) -> Json raise Diag {
     Illegal =>
       raise Diag(
         code=JBadLiteral,
-        loc=loc,
+        loc~,
         message="malformed numeric literal '\{raw}'",
         help=None,
         path="",
@@ -94,7 +90,8 @@ fn numeric_text(raw : String) -> NumParse {
     return Illegal
   }
   // 浮点（仅十进制）：含 . / e / E——Double 占位走 @json.parse，界检查不适用
-  if base == 10 && (body.contains(".") || body.contains("e") || body.contains("E")) {
+  if base == 10 &&
+    (body.contains(".") || body.contains("e") || body.contains("E")) {
     return Ok(s, 0L)
   }
   // 整数：Int64 累加（溢出检测），十进制输出
@@ -137,13 +134,13 @@ fn type_mismatch(
   loc : @basic.Location,
   expected : String,
   got : String,
-  help~ : String? = None,
+  help? : String? = None,
 ) -> Diag {
   Diag(
     code=JFieldType,
-    loc=loc,
+    loc~,
     message="expects \{expected}, got \{got}",
-    help=help,
+    help~,
     path="",
   )
 }
@@ -153,7 +150,7 @@ fn type_mismatch(
 fn not_literal(loc : @basic.Location, what : String) -> Diag {
   Diag(
     code=JNotLiteral,
-    loc=loc,
+    loc~,
     message="\{what} is outside the L0 pure-literal subset",
     help=Some(
       "use a literal value (record, array, map, or scalar); for anything computed, write real MoonBit instead",
@@ -167,7 +164,7 @@ fn check_depth(depth : Int, loc : @basic.Location) -> Unit raise Diag {
   if depth > MAX_DEPTH {
     raise Diag(
       code=JDeep,
-      loc=loc,
+      loc~,
       message="nesting exceeds the depth budget of \{MAX_DEPTH}",
       help=Some("flatten the data or split it into several .json.mbt files"),
       path="",
@@ -213,7 +210,7 @@ fn l0_expr(
         // 恰好一个位置参数才视为 Some(v)（List 构造器不公开——按 head/size 检查）
         let arg : @syntax.Expr? = if args.length() == 1 {
           match args.head() {
-            Some({ value, kind: Positional }) => Some(value)
+            Some({ value, kind: Positional, }) => Some(value)
             _ => None
           }
         } else {
@@ -228,11 +225,14 @@ fn l0_expr(
                   loc,
                   other.show(),
                   "Some(...)",
-                  help=Some("wrap values in Some(...) only for Option[T] fields"),
+                  help=Some(
+                    "wrap values in Some(...) only for Option[T] fields",
+                  ),
                 )
               None => l0_expr(env, v, None, depth + 1)
             }
-          None => raise not_literal(loc, "Some(...) with non-positional arguments")
+          None =>
+            raise not_literal(loc, "Some(...) with non-positional arguments")
         }
       } else {
         raise not_literal(loc, "function call")
@@ -276,7 +276,9 @@ fn l0_constant(
                   loc,
                   "Int (32-bit)",
                   "\{raw}",
-                  help=Some("change the field type to Int64, or use a value within ±2147483647"),
+                  help=Some(
+                    "change the field type to Int64, or use a value within ±2147483647",
+                  ),
                 )
               }
             Overflow(_) =>
@@ -284,7 +286,9 @@ fn l0_constant(
                 loc,
                 "Int (32-bit)",
                 "\{raw}",
-                help=Some("the value exceeds even Int64; keep exact digits by storing a String explicitly"),
+                help=Some(
+                  "the value exceeds even Int64; keep exact digits by storing a String explicitly",
+                ),
               )
             Illegal => num_json(raw, loc) // 交由 num_json 统一报 J3003
           }
@@ -296,7 +300,9 @@ fn l0_constant(
                 loc,
                 "Int64",
                 "\{raw}",
-                help=Some("the value exceeds Int64; keep exact digits by storing a String explicitly"),
+                help=Some(
+                  "the value exceeds Int64; keep exact digits by storing a String explicitly",
+                ),
               )
             Illegal => num_json(raw, loc)
           }
@@ -319,7 +325,15 @@ fn l0_constant(
       match ty {
         Some(JTBool) | None => Json::boolean(b)
         Some(other) =>
-          raise type_mismatch(loc, other.show(), if b { "true" } else { "false" })
+          raise type_mismatch(
+            loc,
+            other.show(),
+            if b {
+              "true"
+            } else {
+              "false"
+            },
+          )
       }
     String(raw) =>
       match ty {
@@ -347,7 +361,7 @@ fn l0_constant(
 fn bad_literal(loc : @basic.Location, what : String) -> Diag {
   Diag(
     code=JBadLiteral,
-    loc=loc,
+    loc~,
     message="\{what} literal has no JSON counterpart",
     help=Some("JSON values are null/bool/number/string/array/object only"),
     path="",
@@ -398,7 +412,9 @@ fn l0_record(
         loc,
         other.show(),
         "record/object",
-        help=Some("wrap the value in the field's type, e.g. StructName::{ ... }"),
+        help=Some(
+          "wrap the value in the field's type, e.g. StructName::{ ... }",
+        ),
       )
     (None, Some(tn)) => {
       let q = longident_name(tn.name)
@@ -414,7 +430,9 @@ fn l0_record(
         code=JDupField,
         loc=f.label.loc,
         message="duplicate field '\{label}'",
-        help=Some("merge the two values into one; a degraded object never carries duplicate keys"),
+        help=Some(
+          "merge the two values into one; a degraded object never carries duplicate keys",
+        ),
         path="",
       )
     }
@@ -442,7 +460,7 @@ fn l0_record(
         if !obj.contains(f.0) {
           raise Diag(
             code=JMissingField,
-            loc=loc,
+            loc~,
             message="missing field '\{f.0}' in '\{d.name}'",
             help=Some("provide the field explicitly; Option[T] fields use None"),
             path="",
@@ -498,7 +516,9 @@ fn l0_map(
         code=JDupField,
         loc=el.key_loc,
         message="duplicate key \"\{key}\"",
-        help=Some("merge the two entries; a degraded object never carries duplicate keys"),
+        help=Some(
+          "merge the two entries; a degraded object never carries duplicate keys",
+        ),
         path="",
       )
     }
@@ -531,9 +551,11 @@ fn constant_shape(c : @syntax.Constant) -> String {
 fn missing_struct(name : String, loc : @basic.Location) -> StructDef raise Diag {
   raise Diag(
     code=JFieldType,
-    loc=loc,
+    loc~,
     message="struct '\{name}' is not defined in this file",
-    help=Some(".json.mbt is single-file and self-contained; define the struct here"),
+    help=Some(
+      ".json.mbt is single-file and self-contained; define the struct here",
+    ),
     path="",
   )
 }

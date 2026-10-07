@@ -12,11 +12,17 @@ pub fn build_value(String, path? : String, expected_name? : String) -> Json rais
 
 pub fn check_source(String, path? : String, expected_name? : String) -> Unit raise Diag
 
+pub fn import_source(String, path? : String, stem~ : String) -> ImportOutcome raise Diag
+
+pub fn json_parse(String, fname? : String) -> Json raise Diag
+
 pub fn json_value_equal(Json, Json) -> Bool
 
 pub fn normalize_json(Json) -> Json
 
 pub fn normalize_json_text(String) -> String raise Diag
+
+pub fn strip_jsonc(String) -> String
 
 // Errors
 pub(all) suberror Diag {
@@ -26,11 +32,17 @@ pub fn Diag::code(Self) -> JCode
 pub fn Diag::render(Self) -> String
 
 // Types and methods
+pub(all) struct ImportOutcome {
+  content : String
+  hints : Array[Diag]
+}
+
 pub(all) enum JCode {
   JUsage
   JIO
   JSyntax
   JJsonSyntax
+  JDupKey
   JNoDoc
   JMultiDoc
   JStemMismatch
@@ -45,6 +57,15 @@ pub(all) enum JCode {
   JUnknownField
   JMissingField
   JDupField
+  JEmptyArr
+  JEmptyObj
+  JAllNull
+  JHeteroArr
+  JMixedKeys
+  JHeteroField
+  JBigNum
+  JTaggedEnumHint
+  JDrift
 }
 pub fn JCode::exit_code(Self) -> Int
 pub fn JCode::num(Self) -> String
