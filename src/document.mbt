@@ -4,6 +4,7 @@
 ///|
 priv struct Doc {
   structs : Map[String, StructDef]
+  enums : Map[String, EnumDef]
   root_expr : @syntax.Expr
   root_ty : JType? // pub let 的类型注解；缺省 = 自由值
 }
@@ -34,7 +35,8 @@ fn analyze(
   }
   // 顶层白名单：struct 定义 + 恰好一个 pub let（D-7；其余顶层 = J2005，
   // L2 落地时再放内部 let）
-  let structs = collect_structs(impls)
+  let tyenv = collect_tyenv(impls)
+  let structs = tyenv.structs
   let mut root_opt : @syntax.Impl? = None
   for i in impls {
     match i {
@@ -124,7 +126,7 @@ fn analyze(
     }
     None => None
   }
-  { structs, root_expr: expr, root_ty, }
+  { structs, enums: tyenv.enums, root_expr: expr, root_ty, }
 }
 
 ///|

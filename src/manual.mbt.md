@@ -182,3 +182,65 @@ test "manual : L0 白名单 fail loud" {
 
 rc 五值表（D-10）：`0` 成功 / `1` 输入错 / `2` 检测到漂移或差异 /
 `3` 保留 / `4` 用法·IO 错。
+
+## 值域枚举与多行文本（§8 裁定 2026-10-07）
+
+有限词表字段用 `enum` 表达——**拼错变体在 `jsonmbt check` 即红**（写时校验，
+防线补位 moon `[4031]`）；降级投影 = 变体名字符串：
+
+```mbt check
+///|
+test "manual : enum 值域（写时红）" {
+  let src =
+    #|enum Status {
+    #|  VerifiedRun
+    #|  Open
+    #|}
+    #|struct Ledger {
+    #|  status : Status
+    #|}
+    #|
+    #|pub let ledger : Ledger = Ledger::{
+    #|  status: VerifiedRun,
+    #|}
+  inspect(
+    @src.build_source(src, path="l.json.mbt", expected_name="ledger"),
+    content="{\"status\":\"VerifiedRun\"}",
+  )
+}
+```
+
+```mbt check
+///|
+test "manual : 拼错变体即红" {
+  let d = try {
+    let _ = @src.build_source(
+      "enum S { A }\nstruct T { s : S }\npub let t : T = T::{ s: B }",
+      path="t.json.mbt",
+      expected_name="t",
+    )
+    "ok"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { "non-diag" }
+  }
+  inspect(d.contains("has no variant 'B'"), content="true")
+}
+```
+
+长文本用 `#|` 多行字符串（每行净内容以 `\n` 连接降级）：
+
+```mbt check
+///|
+test "manual : #| 多行文本" {
+  let out = @src.build_source(
+    "pub let m = #|第一行\n#|第二行",
+    path="m.json.mbt",
+    expected_name="m",
+  )
+  inspect(out, content="\"第一行\\n第二行\"")
+}
+```
+
+**边界**：带 payload 构造器（`E(3032)`）v1 不支持（降级投影无自然 JSON
+形态——建模为全变体 `E3032_UnknownChar` 或 struct 字段）；裸构造器无
+类型上下文时语义不明，保守拒绝。

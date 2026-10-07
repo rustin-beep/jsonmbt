@@ -317,3 +317,104 @@ test "审 P2-1 : 保留字 stem 清洗（test.json 等 15/16 实测中招）" {
   let out = do_import("{\"k\":1}", stem="test")
   let _ = @src.build_source(out, path="t.json.mbt", expected_name="x_test")
 }
+
+///|
+test "§8 裁定 : 无参构造器字面量（enum 投影 + 拼错变体 jsonmbt 侧红）" {
+  let src =
+    #|enum Severity {
+    #|  E1001_UnknownChar
+    #|  E1002_UnterminatedString
+    #|}
+    #|struct Entry {
+    #|  sev : Severity
+    #|}
+    #|
+    #|pub let entry : Entry = Entry::{
+    #|  sev: E1001_UnknownChar,
+    #|}
+  let out = @src.build_source(src, path="entry.json.mbt", expected_name="entry")
+  inspect(out, content="{\"sev\":\"E1001_UnknownChar\"}")
+  // 拼错变体：jsonmbt 自持校验写时红（防线补位 moon [4031]）
+  let d = try {
+    let _ = @src.build_source(
+      src.replace(old="E1001_UnknownChar,", new="E1001_UnknownCharX,"),
+      path="entry.json.mbt",
+      expected_name="entry",
+    )
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(
+    d.contains("enum 'Severity' has no variant 'E1001_UnknownCharX'"),
+    content="true",
+  )
+}
+
+///|
+test "§8 裁定 : #| 多行字符串（行净内容 \n 连接 + 类型错位红）" {
+  let src =
+    #|struct Note {
+    #|  body : String
+    #|  n : Int
+    #|}
+    #|
+    #|pub let note : Note = Note::{
+    #|  body: #|第一行说明
+    #|#|第二行说明
+    #|,
+    #|  n: 1,
+    #|}
+  let out = @src.build_source(src, path="note.json.mbt", expected_name="note")
+  inspect(
+    out,
+    content="{\"body\":\"第一行说明\\n第二行说明\",\"n\":1}",
+  )
+  // 类型错位（Int 字段给多行字符串）→ J3004
+  let d = try {
+    let _ = @src.build_source(
+      src.replace(old="n : Int", new="n : Bool"),
+      path="note.json.mbt",
+      expected_name="note",
+    )
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d.contains("[J3004]"), content="true")
+}
+
+///|
+test "§8 裁定边界 : 带 payload 构造器仍拒（观察项）+ 无上下文裸构造器拒" {
+  // E(3032)：Apply(Constr(E), payload)——v1 观察（投影无自然 JSON 形态）
+  let src =
+    #|enum Sev {
+    #|  E(Int)
+    #|}
+    #|struct T {
+    #|  s : Sev
+    #|}
+    #|
+    #|pub let t : T = T::{
+    #|  s: E(3032),
+    #|}
+  let d = try {
+    let _ = @src.build_source(src, path="t.json.mbt", expected_name="t")
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d.contains("constructor 'E' with payload"), content="true")
+  // 裸构造器无类型上下文：语义不明保守拒
+  let d2 = try {
+    let _ = @src.build_source(
+      "pub let t = VerifiedRun",
+      path="t.json.mbt",
+      expected_name="t",
+    )
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d2.contains("[J3001]"), content="true")
+}

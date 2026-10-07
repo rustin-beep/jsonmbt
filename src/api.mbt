@@ -48,7 +48,11 @@ pub fn build_value(
 
 ///|
 fn build_value_of(doc : Doc) -> Json raise Diag {
-  l0_expr(doc.structs, doc.root_expr, doc.root_ty, 0)
+  let root_ty = match doc.root_ty {
+    Some(t) => Some(resolve_custom(doc.structs, doc.enums, t))
+    None => None
+  }
+  l0_expr(doc.structs, doc.enums, doc.root_expr, root_ty, 0)
 }
 
 ///|

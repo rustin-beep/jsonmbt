@@ -186,6 +186,7 @@ fn in_i32_range(v : Int64) -> Bool {
 /// L0 提取主函数：Expr → Json 值树（校验与降级同一趟——D-8 check=build 同路径的前提）
 fn l0_expr(
   env : Map[String, StructDef],
+  enums : Map[String, EnumDef],
   e : @syntax.Expr,
   ty : JType?, // 期望类型；None = 无类型上下文（自由值）
   depth : Int,
@@ -194,7 +195,7 @@ fn l0_expr(
   match e {
     Constant(c~, loc~) => l0_constant(c, ty, loc)
     Record(type_name~, fields~, loc~, ..) =>
-      l0_record(env, type_name, fields, ty, depth, loc)
+      l0_record(env, enums, type_name, fields, ty, depth, loc)
     Array(exprs~, loc~, ..) => {
       let elem_ty : JType? = match ty {
         Some(JTArray(t)) => Some(t)
@@ -203,11 +204,11 @@ fn l0_expr(
       }
       let arr : Array[Json] = []
       for e2 in exprs {
-        arr.push(l0_expr(env, e2, elem_ty, depth + 1))
+        arr.push(l0_expr(env, enums, e2, elem_ty, depth + 1))
       }
       Json::array(arr)
     }
-    Map(elems~, loc~) => l0_map(env, elems, ty, depth, loc)
+    Map(elems~, loc~) => l0_map(env, enums, elems, ty, depth, loc)
     Apply(func~, args~, loc~) => {
       // Some(v)：func = Constr(Some)，单个位置参数（探针实锤形态）
       let is_some = func is Constr(constr~, ..) && constr.name.name == "Some"
@@ -224,7 +225,7 @@ fn l0_expr(
         match arg {
           Some(v) =>
             match ty {
-              Some(JTOption(t)) => l0_expr(env, v, Some(t), depth + 1)
+              Some(JTOption(t)) => l0_expr(env, enums, v, Some(t), depth + 1)
               Some(other) =>
                 raise type_mismatch(
                   loc,
@@ -234,12 +235,25 @@ fn l0_expr(
                     "wrap values in Some(...) only for Option[T] fields",
                   ),
                 )
-              None => l0_expr(env, v, None, depth + 1)
+              None => l0_expr(env, enums, v, None, depth + 1)
             }
           None =>
             raise not_literal(loc, "Some(...) with non-positional arguments")
         }
       } else {
+        // 带 payload 构造器（如 E(3032)）：v1 观察项（§8 裁定附带——投影
+        // 无自然 JSON 形态）；给可行动提示
+        if func is Constr(constr~, ..) {
+          raise Diag(
+            code=JNotLiteral,
+            loc~,
+            message="constructor '\{constr.name.name}' with payload",
+            help=Some(
+              "v1 supports payload-less enum variants only; model E(3032) as full variants (E3032_UnknownChar) or a struct field",
+            ),
+            path="",
+          )
+        }
         raise not_literal(loc, "function call")
       }
     }
@@ -250,15 +264,113 @@ fn l0_expr(
           Some(other) => raise type_mismatch(loc, other.show(), "null")
         }
       } else {
-        raise not_literal(loc, "constructor '\{constr.name.name}'")
+        // §8 裁定（2026-10-07，#7/#9 实例前置）：无参构造器字面量入 L0——
+        // 期望 enum 下降级投影 = 变体名字符串（serde 惯例）；jsonmbt 自持
+        // 校验查变体表（拼错变体在本闸即红，补位 moon [4031] 防线）
+        enum_case(enums, constr.name.name, ty, loc)
       }
     Unary(..) => raise not_literal(expr_loc(e), "unary operator expression")
     Infix(..) => raise not_literal(expr_loc(e), "arithmetic expression")
     If(..) => raise not_literal(expr_loc(e), "if expression")
     Ident(..) => raise not_literal(expr_loc(e), "identifier reference")
     Interp(..) => raise not_literal(expr_loc(e), "string interpolation")
-    MultilineString(..) => raise not_literal(expr_loc(e), "multiline string")
+    MultilineString(elems~, loc~) => {
+      // §8 裁定（2026-10-07，#9）：#| 多行字符串入 L0——每行净内容以 \n
+      // 连接（探针锚：元素形态 String(净行)，无换行符）；插值行属计算面拒
+      let buf = StringBuilder()
+      let mut first = true
+      for el in elems {
+        if el is @syntax.MultilineStringElem::String(s) {
+          if not(first) {
+            buf.write_char('\n')
+          }
+          buf.write_string(s)
+          first = false
+        } else {
+          raise not_literal(loc, "multiline string with interpolation")
+        }
+      }
+      match ty {
+        Some(JTString) | None => Json::string(buf.to_string())
+        Some(other) =>
+          raise type_mismatch(loc, other.show(), "multiline string")
+      }
+    }
     _ => raise not_literal(expr_loc(e), "this expression")
+  }
+}
+
+///|
+/// 自定义名解析：JTStruct(n) 在 struct 表 miss 而 enum 表命中时改写为
+/// JTEnum（parse_type 裸名统一产 JTStruct——enum/struct 在类型头同形，
+/// 查表时分化）
+fn resolve_custom(
+  env : Map[String, StructDef],
+  enums : Map[String, EnumDef],
+  ty : JType,
+) -> JType {
+  match ty {
+    JTStruct(n) =>
+      if not(env.contains(n)) && enums.contains(n) {
+        JTEnum(n)
+      } else {
+        ty
+      }
+    JTOption(t) => JTOption(resolve_custom(env, enums, t))
+    JTArray(t) => JTArray(resolve_custom(env, enums, t))
+    JTMap(k, v) => JTMap(k, resolve_custom(env, enums, v))
+    other => other
+  }
+}
+
+///|
+/// 无参构造器字面量的 enum 案（§8 裁定）：期望 JTEnum → 查变体表 →
+/// 投影 = 变体名字符串；变体不存在 = J3004（jsonmbt 侧防线，对齐 moon
+/// [4031] 的写时红）；带 payload 构造器 v1 仍拒（投影无自然 JSON 形态，
+/// 观察项——§8 裁定附带）
+fn enum_case(
+  enums : Map[String, EnumDef],
+  variant : String,
+  ty : JType?,
+  loc : @basic.Location,
+) -> Json raise Diag {
+  match ty {
+    Some(JTEnum(name)) =>
+      match enums.get(name) {
+        Some(def) =>
+          if def.variants.contains(variant) {
+            Json::string(variant)
+          } else {
+            raise Diag(
+              code=JFieldType,
+              loc~,
+              message="enum '\{name}' has no variant '\{variant}'",
+              help=Some("variants of '\{name}': \{def.variants.join(" ")}"),
+              path="",
+            )
+          }
+        None =>
+          raise Diag(
+            code=JFieldType,
+            loc~,
+            message="enum '\{name}' is not defined in this file",
+            help=Some(
+              ".json.mbt is single-file; declare the enum alongside the structs",
+            ),
+            path="",
+          )
+      }
+    Some(JTOption(inner)) => enum_case(enums, variant, Some(inner), loc)
+    Some(other) =>
+      raise type_mismatch(
+        loc,
+        other.show(),
+        "enum variant '\{variant}'",
+        help=Some("enum literals need an enum-typed field"),
+      )
+    None =>
+      // 无类型上下文的裸构造器：语义不明（moon 侧同样无法定型），保守拒
+      raise not_literal(loc, "enum variant '\{variant}' (no type context)")
   }
 }
 
@@ -390,6 +502,7 @@ fn lookup_struct(
 /// Record → JSON 对象；期望 struct 时做字段集校验（未知/缺失/重复）
 fn l0_record(
   env : Map[String, StructDef],
+  enums : Map[String, EnumDef],
   type_name : @syntax.TypeName?,
   fields : @list.List[@syntax.FieldDef],
   ty : JType?,
@@ -444,7 +557,7 @@ fn l0_record(
     let fty : JType? = match sd {
       Some(d) =>
         match d.fields.iter().find_first(fn(f) { f.0 == label }) {
-          Some((_, t, _)) => Some(t)
+          Some((_, t, _)) => Some(resolve_custom(env, enums, t))
           None =>
             raise Diag(
               code=JUnknownField,
@@ -456,7 +569,7 @@ fn l0_record(
         }
       None => None
     }
-    obj[label] = l0_expr(env, f.expr, fty, depth + 1)
+    obj[label] = l0_expr(env, enums, f.expr, fty, depth + 1)
   }
   // 缺字段：record 字面量必须给全字段（Option 字段写 None——D-5 v1 先拒对齐）
   match sd {
@@ -481,6 +594,7 @@ fn l0_record(
 /// Map 字面量 → JSON 对象（键名逃生门的降级侧；key 必须 String 字面量）
 fn l0_map(
   env : Map[String, StructDef],
+  enums : Map[String, EnumDef],
   elems : @list.List[@syntax.MapExprElem],
   ty : JType?,
   depth : Int,
@@ -527,7 +641,7 @@ fn l0_map(
         path="",
       )
     }
-    obj[key] = l0_expr(env, el.expr, vty, depth + 1)
+    obj[key] = l0_expr(env, enums, el.expr, vty, depth + 1)
   }
   Json::object(obj)
 }

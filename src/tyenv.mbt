@@ -15,6 +15,7 @@ priv enum JType {
   JTArray(JType)
   JTMap(JType, JType) // K 仅接受 String（JSON 键即字符串；Map 逃生门适用面）
   JTStruct(String)
+  JTEnum(String) // enum 名（§8 裁定 2026-10-07：无参构造器字面量入 L0，#7/#9 实例前置）
   JTUnsupported(String) // 表达了但 L0 不支持的类型（Unit/Arrow/Tuple/Any/未知名…）
   JTEmpty // 推断器内部中间态：空容器元素占位（推断定稿前消除，不进校验器）
   JTNullLike // 推断器内部中间态：值位 null 的占位（聚合前消除）
@@ -32,6 +33,7 @@ fn JType::show(self : JType) -> String {
     JTArray(t) => "Array[\{t.show()}]"
     JTMap(k, v) => "Map[\{k.show()}, \{v.show()}]"
     JTStruct(n) => n
+    JTEnum(n) => n
     JTUnsupported(s) => s
     JTEmpty => "?"
     JTNullLike => "null"
@@ -45,19 +47,34 @@ priv struct StructDef {
 }
 
 ///|
+/// enum 定义（Variant 形态）：v1 只收**无参**构造器（带参投影无自然
+/// JSON 形态，挂观察——§8 裁定附带；带参 enum 定义本身合法入表、
+/// 字面量侧拒）
+priv struct EnumDef {
+  name : String
+  variants : Array[String] // 无参构造器名（降级投影 = 变体名字符串）
+}
+
+///|
+/// 类型环境（struct 表 + enum 表——l0 查表校验变体存在性）
+priv struct TypeEnv {
+  structs : Map[String, StructDef]
+  enums : Map[String, EnumDef]
+}
+
+///|
 /// 从顶层声明收集 struct 定义。不认识的 TypeDecl 形态（enum/alias/abstract…）
 /// 不进表——引用到时按 JTUnsupported 报；顶层混入非 struct 声明由 document 层把关。
-fn collect_structs(
-  impls : @list.List[@syntax.Impl],
-) -> Map[String, StructDef] raise Diag {
-  let env : Map[String, StructDef] = Map([])
+fn collect_tyenv(impls : @list.List[@syntax.Impl]) -> TypeEnv raise Diag {
+  let structs : Map[String, StructDef] = Map([])
+  let enums : Map[String, EnumDef] = Map([])
   for i in impls {
     match i {
       TopTypeDef(decl) =>
         match decl.components {
           Record(fields~, ..) => {
             let name = decl.tycon
-            if env.contains(name) {
+            if structs.contains(name) {
               raise Diag(
                 code=JDupStruct,
                 loc=decl.loc,
@@ -72,14 +89,37 @@ fn collect_structs(
             for f in fields {
               fs.push((f.name.label, parse_type(f.ty), f.loc))
             }
-            env[name] = { name, fields: fs, }
+            structs[name] = { name, fields: fs, }
           }
-          _ => () // 非 record 形态的 TypeDecl：引用到时再报
+          Variant(ctors) => {
+            // enum：无参构造器收进变体表；带参（ConsDecl.args 非空）拒收该变体
+            let name = decl.tycon
+            if enums.contains(name) || structs.contains(name) {
+              raise Diag(
+                code=JDupStruct,
+                loc=decl.loc,
+                message="duplicate type definition '\{name}'",
+                help=Some(
+                  "rename one of the types; .json.mbt keeps one schema per name",
+                ),
+                path="",
+              )
+            }
+            let vs : Array[String] = []
+            for c in ctors {
+              match c.args {
+                Some(_) => () // 带参构造器：v1 不入变体表（字面量侧拒）
+                None => vs.push(c.name.name)
+              }
+            }
+            enums[name] = { name, variants: vs, }
+          }
+          _ => () // 其余 TypeDecl 形态：引用到时按 JTUnsupported 报
         }
       _ => ()
     }
   }
-  env
+  { structs, enums, }
 }
 
 ///|
