@@ -9,6 +9,8 @@
 #include <wchar.h>
 
 #ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
 #include <windows.h>
 #endif
 
@@ -39,6 +41,11 @@ MOONBIT_FFI_EXPORT moonbit_bytes_t jsonmbt_read_stdin(void) {
 }
 
 MOONBIT_FFI_EXPORT void jsonmbt_write_stderr(moonbit_bytes_t data, int32_t len) {
+#ifdef _WIN32
+  // binary mode: no CRLF translation - diagnostics channel (D-10) must be
+  // byte-identical across platforms (first drift caught by layer-2 golden)
+  _setmode(_fileno(stderr), _O_BINARY);
+#endif
   fwrite(data, 1, (size_t)len, stderr);
   fflush(stderr);
 }

@@ -6,7 +6,10 @@
 
 ///|
 fn write_stderr(s : String) -> Unit {
-  jsonmbt_write_stderr(@unicode.to_utf8_bytes(s), s.length())
+  // 长度必须是 UTF-8 字节数（s.length() 是码元数——多字节字符按码元数
+  // 写入会截尾，issue #1：em-dash 每个多丢 2 字节）
+  let bytes = @unicode.to_utf8_bytes(s)
+  jsonmbt_write_stderr(bytes, bytes.length())
 }
 
 ///|
