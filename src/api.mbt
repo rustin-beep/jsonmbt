@@ -48,6 +48,34 @@ pub(all) struct ImportOutcome {
 }
 
 ///|
+/// stem → 合法 binding（label 域标识符）：非法字符→下划线、大写→小写、
+/// 数字/非法开头→x_ 前缀、空→x。类型命名（capitalize）共用此基。
+pub fn sanitize_stem(name : String) -> String {
+  if name == "" {
+    return "x"
+  }
+  let buf = StringBuilder()
+  for ch in name {
+    let c = ch.to_int()
+    if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || c >= 0x80 {
+      buf.write_char(ch)
+    } else if ch >= 'A' && ch <= 'Z' {
+      buf.write_char(Char::from_int(c + 32))
+    } else {
+      buf.write_char('_')
+    }
+  }
+  let out = buf.to_string()
+  let first = out[0]
+  let legal_head = (first >= 'a' && first <= 'z') || first == '_' || first.to_int() >= 0x80
+  if legal_head {
+    out
+  } else {
+    "x_" + out
+  }
+}
+
+///|
 /// 摄取：JSON/JSONC 文本 → .json.mbt 全文
 /// 管线：字符串感知剥离（D-9）→ 自持 RFC 8259 解析（保 number repr/键序/
 /// 重复键拒绝）→ 形状推断（D-1/D-2/逃生门）→ fmt-canonical 生成
@@ -57,23 +85,35 @@ pub fn import_source(
   path? : String = "<json>",
   stem~ : String,
 ) -> ImportOutcome raise Diag {
+  // stem 前置清洗（化石批量实锤："array_address.c" 文件名直接作 stem 产
+  // 非法 binding/类型名——曾靠生成保险丝兜底成 internal 错，现正名）
+  let stem = sanitize_stem(stem)
   let stripped = strip_jsonc(json_text)
   let root = json_parse(stripped, fname=path)
-  let result = infer_shapes(root, stem~, fname=path)
-  let content = generate_source(result, root, stem~, src_name=path)
+  let result = infer_shapes(root, stem=stem, fname=path)
+  let content = generate_source(result, root, stem=stem, src_name=path)
   // 保险丝（审 P1-1 处方）：产物丢回自家校验器回吃——生成器任何非法输出
   // 在落盘前 fail loud（import 产物承诺 = 合法 .json.mbt，PLAN §1.3）
   try {
     check_source(content, path=path + ".mbt", expected_name=stem)
   } catch {
-    _ =>
+    e => {
+      // 原始诊断透出（自证可诊断：说清产物哪一行非法）
+      let detail : String = if e is Diag(..) {
+        e.render()
+      } else {
+        "non-Diag error"
+      }
       raise Diag(
         code=JIO,
         loc=dummy_loc(),
-        message="internal: import produced an invalid .json.mbt (generator bug)",
-        help=Some("please report this with the input JSON — the generator must never emit invalid output"),
+        message="internal: import produced an invalid .json.mbt (generator bug); failing check says: \{detail}",
+        help=Some(
+          "please report this with the input JSON — the generator must never emit invalid output",
+        ),
         path=path,
       )
+    }
   }
   { content, hints: result.hints, }
 }

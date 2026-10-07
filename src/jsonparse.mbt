@@ -17,7 +17,11 @@ priv struct JParser {
 
 ///|
 fn JParser::new(src : String, fname : String) -> JParser {
-  { view: src.to_array(), n: src.length(), pos: 0, line: 1, bol: 0, fname, }
+  let view = src.to_array()
+  // n = 码点数（view.length）——src.length() 是 UTF-16 码元数：星面字符
+  // （emoji 代理对）时码元 > 码点，n 虚大 → 索引越界 panic（Vitro
+  // catalog.json 62 个 emoji 实锤——fail loud 契约不允许 panic）
+  { view, n: view.length(), pos: 0, line: 1, bol: 0, fname, }
 }
 
 ///|

@@ -24,19 +24,32 @@ fn is_reserved_label(name : String) -> Bool {
 
 ///|
 /// 合法字段 label：小写字母开头（snake/驼峰）/下划线开头/非 ASCII（中文）；
-/// 大写开头非法（类型名域）、保留字非法（探针①）
+/// 大写开头非法（类型名域）、保留字非法（探针①）；
+/// **全字符验证**——其余字符限 [a-zA-Z0-9_] 与非 ASCII（Vitro rules.json
+/// 实锤：曾只验首字符，"memory.dump" 带点键直进产物 → J1001——审 A4
+/// 形态的 label 通道变体）
 fn is_legal_label(name : String) -> Bool {
   if name == "" || is_reserved_label(name) {
     return false
   }
-  let first = name[0] // code unit：ASCII 判定足够（非法域只有大写 ASCII）
-  if first >= 'A' && first <= 'Z' {
+  let chars = name.to_array()
+  let first = chars[0]
+  let first_ok = (first >= 'a' && first <= 'z') || first == '_' || first.to_int() >= 0x80
+  if !(first_ok) {
     return false
   }
-  if (first >= 'a' && first <= 'z') || first == '_' {
-    return true
+  for i = 1; i < chars.length(); i = i + 1 {
+    let c = chars[i]
+    let ok = (c >= 'a' && c <= 'z') ||
+      (c >= 'A' && c <= 'Z') ||
+      (c >= '0' && c <= '9') ||
+      c == '_' ||
+      c.to_int() >= 0x80
+    if !(ok) {
+      return false
+    }
   }
-  first.to_int() >= 0x80
+  true
 }
 
 ///|

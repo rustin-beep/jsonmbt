@@ -265,3 +265,37 @@ test "审 P3 : Int64 下界 -2^63 不误拒（数值边界补齐）" {
   inspect(out.contains("a : Int64"), content="true")
   let _ = @src.build_source(out, path="t.json.mbt", expected_name="t") // 回吃合法
 }
+
+///|
+test "Vitro catalog 防回归 : 星面字符（emoji 代理对）不越界 panic" {
+  // 根因：String.length()（UTF-16 码元）> to_array()（码点）——n 虚大越界；
+  // 62 个 emoji 的真实 catalog 曾触发（fail loud 契约禁 panic）
+  let out = do_import("{\"msg\": \"a🔧b📋c\"}")
+  inspect(out.contains("a🔧b📋c"), content="true")
+  let _ = @src.build_source(out, path="t.json.mbt", expected_name="t") // 回吃合法
+}
+
+///|
+test "Vitro rules 防回归 : 带点键（\"memory.dump\"）只验首字符的漏网 → Map 逃生门" {
+  // is_legal_label 曾只验首字符——"memory.dump" 小写开头放行，点直进产物
+  // 产 J1001（审 A4 的 label 通道变体）；修后全字符验证 → 整对象转 Map
+  let out = do_import("{\"skip\": { \"capabilities\": \"a\", \"memory.dump\": \"b\" }}")
+  inspect(out.contains("{ \"capabilities\""), content="true")
+  inspect(out.contains("\"memory.dump\""), content="true")
+  let _ = @src.build_source(out, path="t.json.mbt", expected_name="t") // 回吃合法
+}
+
+///|
+test "化石批量防回归 : 带点 stem 清洗（array_address.c → 合法 binding）" {
+  let out = do_import("{\"v\": 1}", stem="array_address.c")
+  inspect(out.contains("pub let array_address_c"), content="true")
+  let _ = @src.build_source(out, path="t.json.mbt", expected_name="array_address_c")
+}
+
+///|
+test "sanitize_stem : 空串/数字开头/大写/中文" {
+  inspect(@src.sanitize_stem(""), content="x")
+  inspect(@src.sanitize_stem("9x"), content="x_9x")
+  inspect(@src.sanitize_stem("Config"), content="config")
+  inspect(@src.sanitize_stem("配置"), content="配置")
+}
