@@ -80,12 +80,22 @@ jsonmbt: error [J3004] examples/server.json.mbt:9:9 expects Int, got String lite
 
 `jsonmbt import x.json` 将从 JSON 反推 `struct` 头 + 直译值，生成合法 `.json.mbt`——存量 JSON 资产的迁移入口。P0 探针已用合成矩阵与真实数据完成实证（含 2,469 张冻结档案压测，未判形态全部落在已知逃生门内，详见 [PLAN §9](docs/PLAN.md)）。
 
-## 在 Vitro CI 中的使用（实验性）
+## 在你的仓里接入（moon 静态门禁）
 
-[Vitro](https://github.com/rustin-beep/vitro) 正在把规则/配置类 JSON 翻转为 `.json.mbt`
-唯一真相源（真相源在仓、`.json` 由 CI 再生供下游生成器消费），jsonmbt 是那条再生链的
-执行器。落地清单与验证证据见 Vitro 仓
-`docs/current/07-质量与裁定/20261007_jsonmbt真相源迁移.md`。
+`.json.mbt` 的价值不是"更好读"，而是**MoonBit 编译器会替你看数据**——类型错、字段名错、
+字段缺失在编译期红（`[4014]` / `[4044]` / `[4091]`），而写坏的 `.json` 照样能通过运行时。
+
+但这个价值**有前提**：文件不在 MoonBit 包边界内，moon 就看不见它。最小接入三步：
+
+```bash
+jsonmbt import data/config.json      # 1. 转换（产物同目录同名 .json.mbt）
+printf '\n' > data/moon.pkg          # 2. 声明包边界（空块，1 字节换行）
+moon fmt data && moon check          # 3. 归一 + 检查（此步会真的拦下类型错）
+```
+
+多模块仓在仓根加 `moon.work`，一条 `moon check` 覆盖全部；CI 里 `moon check` 放在
+`jsonmbt build` **之前**。完整接法、CI 接线片段、注入测试法（怎么证明门禁真的会红）、
+以及 9 条实测坑表见 **[docs/INTEGRATION.md](docs/INTEGRATION.md)**。
 
 **exe 获取（推荐：clone 源码自行构建）**：
 
@@ -97,13 +107,13 @@ MOON_CC=clang moon build --target native --release
 ```
 
 > **为什么是 clone 而不是装包**：jsonmbt 目前**不发布 mooncakes 包**，这是主动选择——
-> 工具捏在自己手里，Vitro 侧又是找问题的试验田，"CI 拉 master 现场构建"换来的是
-> **改动即时可见**（改完 jsonmbt 推上去，Vitro CI 立刻用上）。代价是 CI 每次编译
-> 一次（约 40 秒）；若将来门禁稳定性或版本锁定成为真需求，再补发包路径。
+> 工具捏在自己手里，下游（如 [Vitro](https://github.com/rustin-beep/vitro)）又是找问题的
+> 试验田，"CI 拉 master 现场构建"换来的是**改动即时可见**（改完 jsonmbt 推上去，下游 CI
+> 立刻用上）。代价是每次约 40 秒编译；版本锁定若成为真需求，再补发包路径。
 >
-> **前提：`.json.mbt` 必须放在 moon 包内**（目录带 `moon.pkg`）。只有这样 MoonBit
-> 编译器才会给它做静态检查——类型错、字段名错、字段缺失都在编译期红（实测 `[4014]` /
-> `[4044]`），而 `.json` 写错照样能通过。见 AGENTS.md 纪律 13。
+> 已落地的首个下游案例：Vitro 把 11 张 `rules.json` 翻转成 `.json.mbt` 真相源（`moon.work`
+> 接入，11/11 逐张注入验证编译期会红），实录见
+> `docs/current/07-质量与裁定/20261007_jsonmbt真相源迁移.md`。
 
 ## 路线图
 
@@ -129,6 +139,7 @@ MOON_CC=clang moon build --target native --release
 
 ## 文档
 
+- [docs/INTEGRATION.md](docs/INTEGRATION.md) — **接入指引**：在你的仓里把 `.json.mbt` 接上 moon 静态门禁（三个前提 / `moon.work` 多模块 / CI 接线 / 注入测试法 / 9 条实测坑表）
 - [docs/PLAN.md](docs/PLAN.md) — 计划权威：里程碑、决策记录（D 系）、探针存档
 - [AGENTS.md](AGENTS.md) — 贡献纪律（红线：红→绿、诚实记录、求值分级冻结）
 - [assets/](assets/) — 视觉资产（logo / banner，SVG 为源）

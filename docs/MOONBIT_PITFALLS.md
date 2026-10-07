@@ -59,3 +59,7 @@ c`.replace 得 `a-bc`）——全量替换必须循环 `while contains { replace
 42. **新工具链要求 `moon.mod` + 块式 `moon.pkg`（jsonmbt 侧回灌，2026-10-06 探针⑥实证）**：rr_moon_mod 特性的新工具链下 `moon.mod.json` / JSON 式 `moon.pkg` 解析失败——必须 `moon.mod` + 块式 `moon.pkg`。本条为 jsonmbt 侧实证回灌（非 Vitro 快照原生条目；编号沿用 jsonmbt PLAN §9 的 #42 登记，Vitro 侧将来若另立 #42 以两侧标注为准）。
 
 
+
+43. **`.json.mbt` 的 moon 静态保护只在「带 `moon.pkg` 的目录」内生效**（2026-10-07 Vitro 迁移批 C 实证，11/11 逐张注入验证）：moon 只把**自带 `moon.pkg` 的目录**当包并编译其中的 `.json.mbt`。只在仓根放一个 `moon.pkg` 时 `moon check` 报 `ran 1 task`——**文件根本没被读**，等于买了 moon 工具链的静态检查却没接上（Vitro 首次迁移 11 张全放 `scripts/` 下、`moon.mod` 在 `moonbit/`，moon 一次都没参与，返工两轮）。另：`moon build` **不**检查孤立包（注入类型错仍 rc=0），`moon test` 与 `moon check` 才会红；`moon check` **全量会跳过孤立包**（须 `moon.work` 多 workspace 或显式进目录）。`moon.pkg` 只能空块——`{}` 与块式 `import ()` 均报 `Failed to calculate build plan`（呼应陷阱 42）。
+
+44. **workspace 根跑无参数 `moon fmt` 会重排无关模块的源文件**（2026-10-07 Vitro 实测，13 行 diff）：`moon.work` 多成员仓里，无参数 `moon fmt`（336 tasks）把 `moonbit/codegen/addr.mbt` 的 `match` 分支缩进整体重排，而该文件本批并未触碰（已 `git checkout` 回滚）。**必须限定成员**：`moon fmt scripts`。另两条同源陷阱：① `moon fmt` 会把 0 字节 `moon.pkg` 改写成 1 字节换行（幂等，不破坏包识别），别误判为文件被改坏；② 判定 moon 是否真检查了某文件**不能信 task 数或 "no work to do"**——用 `moon check --dry-run | grep 'workspace-path'` 看真实编译单元，再用跨类型注入看 rc（同类型改数值不红是**正确的**，moon 抓类型/字段不抓业务语义）。
