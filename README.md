@@ -76,7 +76,7 @@ jsonmbt: error [J3004] examples/server.json.mbt:9:9 expects Int, got String lite
 
 禁用计算保住「所见即所得」：降级对值无损且确定，diff 噪音归零。
 
-## importer（规划中，P1.5）
+## importer（已落地）
 
 `jsonmbt import x.json` 将从 JSON 反推 `struct` 头 + 直译值，生成合法 `.json.mbt`——存量 JSON 资产的迁移入口。P0 探针已用合成矩阵与真实数据完成实证（含 2,469 张冻结档案压测，未判形态全部落在已知逃生门内，详见 [PLAN §9](docs/PLAN.md)）。
 
@@ -86,7 +86,7 @@ jsonmbt: error [J3004] examples/server.json.mbt:9:9 expects Int, got String lite
 |---|---|
 | ✅ P0 | 探针：生态扫描 / 行为矩阵 / importer 三映射 / 真实数据压测 |
 | 🟡 P1 | L0 校验器 + 降级器 + CLI（build/check）——**主体已落地**，余项随 P1.5 收口 |
-| P1.5 | importer v1 + `--check` 幂等闸 + 层 2 Go 黑盒防线 + mooncakes 发包 |
+| ✅ P1.5 主体 | importer v1 + `--check` 幂等闸 + 层 2 Go 黑盒驱动（余项：mooncakes 发包 / Vitro 试点） |
 | P2 | npm 包（js 出口）+ 在线试玩页 + `jsonmbt schema` 导出 |
 | P3 | L1/L2 求值分级 + diff 模式 |
 
@@ -98,7 +98,7 @@ jsonmbt: error [J3004] examples/server.json.mbt:9:9 expects Int, got String lite
 
 ## 工程
 
-- 内层防线：`moon test` 语义锚（当前 28 锚全绿）；外层防线（Go 黑盒：CLI 进程契约 golden、确定性断言、压测）随 P1.5 落地——对外承诺的真防线在层 2。
+- 内层防线：`moon test` 语义锚（当前 56 锚全绿）；外层防线：Go 黑盒驱动已上岗（`go run ./tests/driver`——CLI 进程契约 stderr 逐字节 golden / probe 样本黄金门禁 / 确定性断言 / 幂等闸证红 / exe 新鲜度门禁）——对外承诺的真防线在层 2。
 - 诊断体系与正/负样本锚纪律继承自 [Vitro](https://github.com/rustin-beep/vitro)（继承语言，不继承口音）。
 - MoonBit 工具链陷阱快照：[docs/MOONBIT_PITFALLS.md](docs/MOONBIT_PITFALLS.md)。
 

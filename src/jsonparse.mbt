@@ -135,7 +135,12 @@ fn jp_value(p : JParser, depth : Int) -> Json raise Diag {
       if c == '-' || (c >= '0' && c <= '9') {
         jp_number(p)
       } else {
-        raise jp_error(p, JJsonSyntax, "invalid JSON: unexpected '\{c}'")
+        // 不可见字符（BOM 等）按码点文本显示（审 P3：unexpected '' 不可见）
+        raise jp_error(
+          p,
+          JJsonSyntax,
+          "invalid JSON: unexpected character U+\{c.to_int().to_string()}",
+        )
       }
   }
 }
@@ -295,6 +300,13 @@ fn jp_string(p : JParser) -> String raise Diag {
       p.pos = p.pos + 1
     } else if c == '\n' {
       raise jp_error(p, JJsonSyntax, "invalid JSON: raw newline inside string")
+    } else if c.to_int() < 0x20 {
+      // RFC 8259 §7：控制字符必须转义——裸控制字符是病态输入，诚实拒绝
+      raise jp_error(
+        p,
+        JJsonSyntax,
+        "invalid JSON: raw control character inside string (must be escaped)",
+      )
     } else {
       buf.write_char(c)
       p.pos = p.pos + 1

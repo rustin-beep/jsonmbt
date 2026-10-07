@@ -6,6 +6,30 @@
 // （同输入两次 import 逐字节一致）的前提
 
 ///|
+/// MoonBit 浮点字面量文法适配（探针⑥：纯整数尾数接指数解析错，须带小数点——
+/// 陷阱 #13 勘误）：JSON 合法的 1e2 / 1E6 / -1e3 在 .json.mbt 层写不成——
+/// 最小改写 = 尾数补 ".0"（审 P1-1）
+fn ensure_double_syntax(repr : String) -> String {
+  let view = repr[:]
+  let n = view.length()
+  let mut e_at = -1
+  for i = 0; i < n; i = i + 1 {
+    if view[i] == 'e' || view[i] == 'E' {
+      e_at = i
+      break
+    }
+  }
+  if e_at < 0 {
+    return repr
+  }
+  // e 之前的尾数若不含 '.'：在 e 前插入（符号/整数尾数均可）
+  if view[0:e_at].contains(".") {
+    return repr
+  }
+  repr[:e_at].to_owned() + ".0" + repr[e_at:].to_owned()
+}
+
+///|
 /// 解码值 → MoonBit 字面量转义（unescape 的逆向；\u{XX} 小写 hex 惯例）
 fn moonbit_escape(s : String) -> String {
   let buf = StringBuilder()
@@ -21,7 +45,11 @@ fn moonbit_escape(s : String) -> String {
       '\u{0C}' => buf.write_string("\\f")
       other =>
         if other.to_int() < 0x20 {
-          buf.write_string("\\u{\\{other.to_int().to_string()}}")
+          // 三段运行时拼接：MoonBit 字符串里 \\ 会吃掉紧随的 \{ 插值——
+          // 写成单串插值会整段源码落盘（审 P1-2 根因）
+          buf.write_string("\\u{")
+          buf.write_string(other.to_int().to_string())
+          buf.write_string("}")
         } else {
           buf.write_char(other) // 非 ASCII 按 UTF-8 原样（源文件即 UTF-8）
         }
@@ -35,7 +63,9 @@ fn moonbit_escape(s : String) -> String {
 /// struct 定义段（字段每行——fmt canonical）
 fn render_struct_def(name : String, fields : Array[(String, JType)]) -> String {
   let buf = StringBuilder()
-  buf.write_string("struct ")
+  // pub struct（审 P2-5）：priv struct 每字段一条 unused_field 警告噪音，
+  // 且 moon info 对 priv 只给不透明 type——schema 出口（P1.5 余项）依赖 pub
+  buf.write_string("pub struct ")
   buf.write_string(name)
   buf.write_string(" {\n")
   for f in fields {
@@ -94,7 +124,7 @@ fn render_value(
     (False, _) => "false"
     (Number(_, repr~), _) =>
       match repr {
-        Some(t) => t
+        Some(t) => ensure_double_syntax(t)
         None => "0" // 自持解析器产物恒带 repr；防御
       }
     (String(s), _) => moonbit_escape(s)

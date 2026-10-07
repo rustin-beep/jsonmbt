@@ -228,3 +228,19 @@ test "J1002 : JSON 输入语法错（normalize_json_text）" {
   let ok = d != "BUILD-SUCCEEDED-BUT-DIAGNOSTIC-EXPECTED" && d.contains("J1002")
   inspect(ok, content="true")
 }
+
+///|
+test "P2-6② : Some(v) 内层期望类型校验判别（Int? 字段给 Some(\"x\")）" {
+  let src =
+    #|struct T {
+    #|  opt : Int?
+    #|}
+    #|
+    #|pub let t : T = T::{
+    #|  opt: Some("x"),
+    #|}
+  expect_diag(
+    src,
+    "jsonmbt: error [J3004] t.json.mbt:6:13 expects Int, got String literal\n  help: change the field type to String, or remove the quotes",
+  )
+}

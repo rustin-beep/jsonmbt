@@ -17,7 +17,7 @@
 10. **`assert_true(x)` 单参数**——带消息断言用 `guard cond else { fail("...") }`。
 11. **`String::substring` 已弃用**——用切片 `s[a:b]`（ASCII 安全场景免 try）+ `.to_owned()`（视图转拥有串；`.to_string()` 在视图上同样弃用）。
 12. **`<+` / `<?` 宏右侧只能接模板字符串/对象字面量**——任意表达式（函数调用、Int）不合法，用 `buf.write_string("...\{interp}")`。
-13. **`1e16` 等 e 记法浮点字面量不可用**——写定点 `10000000000000000.0`；指数值用除法/构造。
+13. **`1e16` 等 e 记法浮点字面量不可用——勘误（jsonmbt 探针⑥ + P1-1 实锤）**：原文不准。实情是**纯整数尾数接指数（`1e2`）解析错**（被拆成 `1`+标识符），**须带小数点**（`1.5e3`/`1.0e2` 合法）。任何「源文本直传进 MoonBit 字面量」的生成器必须做 `ensure_double_syntax` 补点改写（jsonmbt src/codegen.mbt）——这条认知差正是 jsonmbt 审 P1-1（import 产非法产物）的根因。
 14. **`Double::to_string` 与 serde_json/ryu 两处分歧**（实测）：整值 `1.0 → "1"`、负零 `-0.0 → "0"`；中段指数区间（≥1e16 / ≤1e-6）两侧记法不同。**JSON 浮点文本化必须走 `@ast.double_to_json_text`**（ryu-pretty 全区间对齐 + 非有限 → null）——那是单源，禁再写一份。
 15. **moon fmt 宽度按 UTF-8 字节计**（中文 3 字节；超 ~84 字节爆开/折行）——**生成物与 fmt 会互踩**：gen_diag 的解法是生成流程内置 `moon fmt`，产物形态以 fmt 为准，gen 原始输出只是中间态。任何新生成器沿用此模式。
 16. **doc 测试（docstring `mbt check` 块与 `*.mbt.md`）是黑盒**——被测包自动 import 为 `@self`，构造器要 `@pkg.Type::Variant` 形态；README.mbt.md 同理（它同时是可执行测试文件）。

@@ -61,5 +61,19 @@ pub fn import_source(
   let root = json_parse(stripped, fname=path)
   let result = infer_shapes(root, stem~, fname=path)
   let content = generate_source(result, root, stem~, src_name=path)
+  // 保险丝（审 P1-1 处方）：产物丢回自家校验器回吃——生成器任何非法输出
+  // 在落盘前 fail loud（import 产物承诺 = 合法 .json.mbt，PLAN §1.3）
+  try {
+    check_source(content, path=path + ".mbt", expected_name=stem)
+  } catch {
+    _ =>
+      raise Diag(
+        code=JIO,
+        loc=dummy_loc(),
+        message="internal: import produced an invalid .json.mbt (generator bug)",
+        help=Some("please report this with the input JSON — the generator must never emit invalid output"),
+        path=path,
+      )
+  }
   { content, hints: result.hints, }
 }

@@ -152,8 +152,88 @@ func runExeWithStdin(exe, dir, stdin string, args ...string) (int, []byte, []byt
 	return rc, out.Bytes(), errb.Bytes(), nil
 }
 
+// exeFreshness：exe mtime 必须晚于全部构建输入（src/ cmd/ moon.mod）——
+// 旧 exe 跑出假绿（审 P2-3；Vitro 模式的最小版，校验和门禁随后续扩面）。
+func exeFreshness(exe string) error {
+	st, err := os.Stat(exe)
+	if err != nil {
+		return err
+	}
+	exeMtime := st.ModTime()
+	var stale []string
+	root := "."
+	for _, dir := range []string{"src", "cmd"} {
+		filepath.WalkDir(filepath.Join(root, dir), func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			name := d.Name()
+			isTest := strings.HasSuffix(name, "_test.mbt") || strings.HasSuffix(name, "_wbtest.mbt") || strings.HasSuffix(name, ".mbtx")
+			if (strings.HasSuffix(name, ".mbt") || strings.HasSuffix(name, ".c") || name == "moon.pkg") && !isTest {
+				if fi, err := d.Info(); err == nil && fi.ModTime().After(exeMtime) {
+					stale = append(stale, path)
+				}
+			}
+			return nil
+		})
+	}
+	for _, f := range []string{"moon.mod", "moon.pkg"} {
+		if fi, err := os.Stat(f); err == nil && fi.ModTime().After(exeMtime) {
+			stale = append(stale, f)
+		}
+	}
+	if len(stale) > 0 {
+		return fmt.Errorf("exe stale (rebuild first: MOON_CC=clang moon build --target native cmd/jsonmbt): newer inputs: %v", stale)
+	}
+	return nil
+}
+
+// probeSamplesGolden：probe/samples 三层锚真门禁（审 P2-2：样本无 runner
+// 且不在编译面 = 摆设）——每个 *.json.mbt 必须 check 过 + build 产物与
+// 同名 .json golden 逐字节一致。
+func caseProbeSamples(exe, dir string) error {
+	entries, err := os.ReadDir(filepath.Join("probe", "samples"))
+	if err != nil {
+		return fmt.Errorf("probe/samples 不可读: %w", err)
+	}
+	ran := 0
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".json.mbt") {
+			continue
+		}
+		ran++
+		src, err := os.ReadFile(filepath.Join("probe", "samples", name))
+		if err != nil {
+			return err
+		}
+		golden, err := os.ReadFile(filepath.Join("probe", "samples", name[:len(name)-len(".mbt")]))
+		if err != nil {
+			return fmt.Errorf("样本 %s 缺 .json 黄金: %w", name, err)
+		}
+		if rc, _, _, err := runExeWithStdin(exe, dir, string(src), "check", "-"); err != nil || rc != 0 {
+			return fmt.Errorf("样本 %s check rc=%d err=%v", name, rc, err)
+		}
+		rc, out, _, err := runExeWithStdin(exe, dir, string(src), "build", "-")
+		if err != nil || rc != 0 {
+			return fmt.Errorf("样本 %s build rc=%d err=%v", name, rc, err)
+		}
+		// 尾部行尾（Windows runtime println 发 \r\n）不属产物语义：双侧归一后逐字节比
+		got := bytes.TrimRight(out, "\r\n")
+		want := bytes.TrimRight(golden, "\r\n")
+		if !bytes.Equal(got, want) {
+			return fmt.Errorf("样本 %s build 产物与黄金不一致\n--golden--\n%q\n--got--\n%q", name, want, got)
+		}
+	}
+	if ran == 0 {
+		return fmt.Errorf("probe/samples 无样本（门禁空转）")
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
+	{"probe-samples-golden", caseProbeSamples},
 	{"build-stdout-deterministic", caseBuildDeterministic},
 	{"import-check-idempotent", caseImportCheckGate},
 	{"usage-rc4", caseUsageRC4},
@@ -186,6 +266,10 @@ func main() {
 	if exe == "" {
 		fmt.Fprintln(os.Stderr, "jsonmbt exe 未找到：先 MOON_CC=clang moon build --target native cmd/jsonmbt，或用 -exe 指定")
 		os.Exit(2)
+	}
+	if err := exeFreshness(exe); err != nil {
+		fmt.Printf("FAIL exe-freshness-gate: %v\n", err)
+		os.Exit(1)
 	}
 	fails := 0
 	for _, c := range cases {

@@ -87,6 +87,7 @@ priv struct InferCtx {
   used_type_names : Array[String]
   name_cache : Map[String, String] // 签名 → struct 名
   hints : Array[Diag]
+  hint_keys : Array[String] // tagged-enum 提示去重（按键名）
   stem : String
   fname : String
 }
@@ -118,6 +119,7 @@ fn infer_shapes(
     used_type_names: [],
     name_cache: Map([]),
     hints: [],
+    hint_keys: [],
     stem,
     fname,
   }
@@ -134,7 +136,7 @@ fn infer_shapes(
     for fs in g.fields {
       let ty = merge_samples(ctx, fs.samples, fs.label, allow_empty_arr=true)
       fields.push((fs.label, ty))
-      if ty is JTArray(JTEmpty) {
+      if has_empty_array(ty) {
         pending_empty.push((g.resolved_name, fs.label))
       }
     }
@@ -147,9 +149,15 @@ fn infer_shapes(
     for s in structs {
       if s.0 != name {
         for f in s.1 {
-          if f.0 == label && f.1 is JTArray(t) && !(t is JTEmpty) {
-            resolved = Some(t)
-            break
+          if f.0 == label {
+            match strip_option(f.1) {
+              JTArray(t) =>
+                if !has_empty_array(t) {
+                  resolved = Some(t)
+                  break
+                }
+              _ => ()
+            }
           }
         }
       }
@@ -162,7 +170,39 @@ fn infer_shapes(
       None => raise empty_arr_diag(ctx, name, label)
     }
   }
+  // 收尾断言（保险丝，审 P1-3/4 处方）：JTEmpty 中间态不得穿过任何容器
+  // 逃逸进产物——残留即 fail loud，绝不生成 Array[?]/Array[?]? 类非法类型
+  for s in structs {
+    for f in s.1 {
+      if has_empty_array(f.1) {
+        raise empty_arr_diag(ctx, s.0, f.0)
+      }
+    }
+  }
+  if has_empty_array(root_ty) {
+    raise empty_arr_diag(ctx, "(top level)", "(elements)")
+  }
   { structs, root_ty: Some(root_ty), hints: ctx.hints, }
+}
+
+///|
+/// 类型里是否残留空容器中间态（穿透 JTOption/JTArray/JTMap——审 P1-3/4：
+/// 只查最外层会漏 Array[?]? / Array[Array[?]]）
+fn has_empty_array(t : JType) -> Bool {
+  match t {
+    JTEmpty => true
+    JTOption(x) | JTArray(x) => has_empty_array(x)
+    JTMap(_, v) => has_empty_array(v)
+    _ => false
+  }
+}
+
+///|
+fn strip_option(t : JType) -> JType {
+  match t {
+    JTOption(x) => strip_option(x)
+    other => other
+  }
 }
 
 ///|
@@ -177,13 +217,13 @@ fn prename_top_group(ctx : InferCtx, root : Json) -> Unit {
 }
 
 ///|
-/// 顶层裸值兜底：JTNullLike/JTEmpty 出现在顶层 = 无类型可推
+/// 顶层裸值兜底：JTNullLike/JTEmpty 出现在顶层 = 无类型可推（穿透容器）
 fn finalize_empty_root(ctx : InferCtx, root_ty : JType) -> Unit raise Diag {
-  match root_ty {
-    JTNullLike => raise all_null_diag(ctx, "(top level)")
-    JTEmpty | JTArray(JTEmpty) =>
-      raise empty_arr_diag(ctx, "(top level)", "(elements)")
-    _ => ()
+  if root_ty is JTNullLike {
+    raise all_null_diag(ctx, "(top level)")
+  }
+  if has_empty_array(root_ty) {
+    raise empty_arr_diag(ctx, "(top level)", "(elements)")
   }
 }
 
@@ -294,6 +334,11 @@ fn register_tagged_enum_hint(
     first <= 'Z' &&
     o.get(k) is Some(True | False | Null)
   if looks_tag {
+    // 去重（审 P3）：同形态多次出现只提示一次
+    if ctx.hint_keys.contains(k) {
+      return
+    }
+    ctx.hint_keys.push(k)
     ctx.hints.push(
       Diag(
         code=JTaggedEnumHint,
@@ -382,7 +427,7 @@ fn merge_samples(
     Some(t) => t
   }
   let with_opt = if nulls > 0 { JTOption(base) } else { base }
-  if !allow_empty_arr && with_opt is JTArray(JTEmpty) {
+  if !allow_empty_arr && has_empty_array(with_opt) {
     raise empty_arr_diag(ctx, "(map)", label)
   }
   with_opt
@@ -513,10 +558,22 @@ fn patch_empty_array(
   for s in structs {
     if s.0 == sname {
       for i, f in s.1 {
-        if f.0 == label && f.1 is JTArray(JTEmpty) {
-          s.1[i] = (label, JTArray(t))
+        if f.0 == label && has_empty_array(f.1) {
+          s.1[i] = (label, replace_empty_array(f.1, t))
         }
       }
     }
+  }
+}
+
+///|
+/// 递归替换空容器中间态（穿透 JTOption/JTArray/JTMap——审 P1-3/4）
+fn replace_empty_array(t : JType, elem : JType) -> JType {
+  match t {
+    JTEmpty | JTArray(JTEmpty) => JTArray(elem)
+    JTOption(x) => JTOption(replace_empty_array(x, elem))
+    JTArray(x) => JTArray(replace_empty_array(x, elem))
+    JTMap(k, v) => JTMap(k, replace_empty_array(v, elem))
+    other => other
   }
 }

@@ -13,6 +13,15 @@ fn write_stderr(s : String) -> Unit {
 }
 
 ///|
+/// J 码诊断单源出口（审 P3：CLI 15 处手写 [Jxxxx] 前缀 → 统一走 Diag 构造，
+/// 码值与渲染只此一家）
+fn jdiag_exit(code : @src.JCode, msg : String, help~ : String? = None) -> Int {
+  let d = @src.Diag(code=code, loc=dummy_loc(), message=msg, help=help, path="")
+  write_stderr(d.render())
+  @src.JCode::exit_code(code)
+}
+
+///|
 fn usage() -> Int {
   write_stderr(
     "jsonmbt — typed JSON source files for MoonBit (.json.mbt)\n" +
@@ -42,9 +51,13 @@ fn normalize_eol(s : String) -> String {
 }
 
 ///|
-/// 输入文件名 → stem（去最后扩展名）
+/// 输出文件名 → stem：.json.mbt 整后缀优先剥（si.json.mbt → si，
+/// 审 P2-1：只去最后一段会产出非法 `pub let si.json`）；其余形态退化到末段
 fn json_stem_of(path : String) -> String? {
   let base = basename(path)
+  if base.has_suffix(".json.mbt") && base.length() > ".json.mbt".length() {
+    return Some(base[:base.length() - ".json.mbt".length()].to_owned())
+  }
   let dot = base.rev_find(".")
   match dot {
     Some(i) => if i > 0 { Some(base[:i].to_owned()) } else { None }
@@ -59,8 +72,7 @@ fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
       if e is @src.Diag(..) {
         return print_diag_exit(e)
       } else {
-        write_stderr("jsonmbt: error [J0002] cannot read '\{path}'")
-        return 4
+        return jdiag_exit(@src.JIO, "cannot read '\{path}'")
       }
   }
   // stem：文件名去扩展；stdin 必须配 -o（从 -o 取 stem——D-7 命名同源）
@@ -71,25 +83,24 @@ fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
         match json_stem_of(o) {
           Some(s) => s
           None => {
-            write_stderr(
-              "jsonmbt: error [J0001] -o needs a file name to derive the stem from",
+            return jdiag_exit(
+              @src.JUsage,
+              "-o needs a file name to derive the stem from",
             )
-            return 4
           }
         }
       None => {
-        write_stderr(
-          "jsonmbt: error [J0001] importing stdin requires -o <out.json.mbt>",
+        return jdiag_exit(
+          @src.JUsage,
+          "importing stdin requires -o <out.json.mbt>",
         )
-        return 4
       }
     }
   } else {
     match json_stem_of(path) {
       Some(s) => s
       None => {
-        write_stderr("jsonmbt: error [J0001] '\{path}' has no usable stem")
-        return 4
+        return jdiag_exit(@src.JUsage, "'\{path}' has no usable stem")
       }
     }
   }
@@ -98,8 +109,7 @@ fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
       if e is @src.Diag(..) {
         return print_diag_exit(e)
       } else {
-        write_stderr("jsonmbt: error [J0002] internal: non-Diag error")
-        return 4
+        return jdiag_exit(@src.JIO, "internal: non-Diag error")
       }
   }
   for h in outcome.hints {
@@ -119,14 +129,26 @@ fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
     if up_to_date {
       return 0
     }
-    write_stderr(
-      "jsonmbt: error [J5001] '\{target}' is not up to date with '\{display}' (import --check)",
+    return jdiag_exit(
+      @src.JDrift,
+      "'\{target}' is not up to date with '\{display}' (import --check)",
+      help=Some("re-run: jsonmbt import \{display}"),
     )
-    write_stderr("  help: re-run: jsonmbt import \{display}")
-    return 2
   }
   if path == "-" {
-    println(outcome.content)
+    match out_opt {
+      Some(_) =>
+        // stdin + -o：落盘（usage 承诺；审 P2-1——原实现无条件 println 返回）
+        atomic_write(target, outcome.content) catch {
+          e =>
+            if e is @src.Diag(..) {
+              return print_diag_exit(e)
+            } else {
+              return 4
+            }
+        }
+      None => println(outcome.content)
+    }
     return 0
   }
   atomic_write(target, outcome.content) catch {
@@ -231,8 +253,7 @@ fn main_rc() -> Int {
   }
   let verb = args[1]
   if verb != "build" && verb != "check" && verb != "import" {
-    write_stderr("jsonmbt: error [J0001] unknown command '\{verb}'")
-    return 4
+    return jdiag_exit(@src.JUsage, "unknown command '\{verb}'")
   }
   let paths : Array[String] = []
   let mut out_opt : String? = None
@@ -242,8 +263,7 @@ fn main_rc() -> Int {
     let a = args[i]
     if a == "-o" || a == "--output" {
       if i + 1 >= args.length() {
-        write_stderr("jsonmbt: error [J0001] -o requires an argument")
-        return 4
+        return jdiag_exit(@src.JUsage, "-o requires an argument")
       }
       out_opt = Some(args[i + 1])
       i = i + 2
@@ -264,16 +284,13 @@ fn main_rc() -> Int {
   for p in paths {
     if p == "-" {
       if paths.length() > 1 {
-        write_stderr(
-          "jsonmbt: error [J0001] '-' (stdin) must be the only input",
-        )
-        return 4
+        return jdiag_exit(@src.JUsage, "'-' (stdin) must be the only input")
       }
     } else if verb != "import" && stem_of(p) is None {
-      write_stderr(
-        "jsonmbt: error [J0001] '\{p}' is not a .json.mbt file (use `-` for stdin)",
-      )
-      return 4
+      return jdiag_exit(
+          @src.JUsage,
+          "'\{p}' is not a .json.mbt file (use `-` for stdin)",
+        )
     }
   }
   if verb == "import" {
@@ -283,8 +300,7 @@ fn main_rc() -> Int {
     return run_import(paths[0], out_opt, do_check)
   }
   if paths.length() > 1 && out_opt is Some(_) {
-    write_stderr("jsonmbt: error [J0001] -o accepts a single input")
-    return 4
+    return jdiag_exit(@src.JUsage, "-o accepts a single input")
   }
   let mut rc = 0
   for p in paths {
@@ -303,8 +319,7 @@ fn run_one(verb : String, path : String, out_opt : String?) -> Int {
       if e is Diag(..) {
         return print_diag_exit(e)
       } else {
-        write_stderr("jsonmbt: error [J0002] cannot read '\{path}'")
-        return 4
+        return jdiag_exit(@src.JIO, "cannot read '\{path}'")
       }
   }
   let expected_name = if path == "-" { None } else { stem_of(path) }
@@ -316,8 +331,7 @@ fn run_one(verb : String, path : String, out_opt : String?) -> Int {
         if e is Diag(..) {
           return print_diag_exit(e)
         } else {
-          write_stderr("jsonmbt: error [J0002] internal: non-Diag error")
-          return 4
+          return jdiag_exit(@src.JIO, "internal: non-Diag error")
         }
     }
     return 0
@@ -328,8 +342,7 @@ fn run_one(verb : String, path : String, out_opt : String?) -> Int {
       if e is Diag(..) {
         return print_diag_exit(e)
       } else {
-        write_stderr("jsonmbt: error [J0002] internal: non-Diag error")
-        return 4
+        return jdiag_exit(@src.JIO, "internal: non-Diag error")
       }
   }
   // 产物去向：stdin 默认 stdout（-o 可改道文件）；文件默认同名 .json

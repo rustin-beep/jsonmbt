@@ -33,9 +33,9 @@ wordmark `jsonmbt` 用 Yellowtail 连笔书法（羽毛笔气质），已转矢�
 
 - **SVG 是唯一真相源**；所有 PNG 由 SVG 派生，禁止直接编辑 PNG。
 - 图形全部为闭合 path（书法月牙/括号由中轴点列 + Catmull-Rom 平滑 + 变宽法线偏移生成；空心点为 `<circle>` 描边），零字体依赖。
-- **修改图形须同步四处**：`logo.svg` / `logo-inverse.svg` / `logo-mono.svg` / `banner.svg` 内嵌组。笔触数据源 `tmp/paths.json`（键：`crescent` / `rightBrace`）与组装脚本 `tmp/build_logo_v3.py` 若被清理，需从 git 历史恢复生成器。
+- **修改图形须同步四处**：`logo.svg` / `logo-inverse.svg` / `logo-mono.svg` / `banner.svg` 内嵌组。笔触数据源 `tmp/paths.json`（键：`crescent` / `rightBrace`）与组装脚本 `tmp/build_logo_v3.py` 若被清理：**tmp/ 不入库，git 历史恢复不可行**——按 `assets/README.md` 的笔触参数重写生成器，或重新导出后经视觉验收（数字互斥教训：文档数字须与产物实测对齐，审 P3）。
 - wordmark 为 Yellowtail（Apache License 2.0，Google Fonts）字形转 path（fontTools SVGPathPen）；内层 translate 必须用字体单位，乘 scale 会二次缩放导致字形叠罗汉（v2 踩过的坑）。
-- banner 内 wordmark 起点 x=162；改 wordmark 须重算 `total_advance × scale` 防撞 ⇄。
+- banner 内 wordmark 起点 x=176（实测 banner.svg；旧记录 x=162/x=174 为过程值，以 svg 为准）；改 wordmark 须重算 `total_advance × scale` 防撞 ⇄。
 
 ## 再生成 PNG（Windows，Edge headless）
 
@@ -53,5 +53,5 @@ E="/c/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
 ## 已知边界
 
 - 16px favicon 下中尖细节变钝（退化为"月牙+括号"仍可读）；favicon 直接用 icon 而非 wordmark——Yellowtail 竖笔画（j 下伸 / t 上伸）在小尺寸浅色场景会糊，如需字标版 favicon 须单独画紧排版。
-- banner 内嵌 icon 已放大至约 80% 画布（scale 1.12，rx 36）；wordmark 起点 x=174 与 icon 保持 36px 间距（j 起笔锋曾贴撞括号）。独立 `logo.svg` 保留较松的留白（GitHub 头像裁圆场景更稳）。
+- banner 内嵌 icon 已放大至约 80% 画布（scale 1.12，rx 36）；wordmark 起点 x=176 与 icon 保持 36px 间距（j 起笔锋曾贴撞括号；x=174 为历史过程值，实际 176）。独立 `logo.svg` 保留较松的留白（GitHub 头像裁圆场景更稳）。
 - 书法月牙/括号/中尖均为程序生成的变宽形态（中轴点列 × 宽度曲线），非字体字形。

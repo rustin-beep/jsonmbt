@@ -66,8 +66,9 @@ fn canon_of(j : Json) -> String {
 }
 
 ///|
-/// 值语义相等（规范化后比较；Number 按 repr 规范文本——整型 -0 与 0 文本不等，
-/// 属 D-11 登记的已知面；对象键序不敏感、数组顺序敏感）
+/// 值语义相等（规范化后比较；Number 按 repr 规范文本——整型 -0 与 0 经
+/// numeric_text 归一后相等（实测 N(-0)==N(0)=="0"，与 JS stringify 同款），
+/// 对象键序不敏感、数组顺序敏感）
 pub fn json_value_equal(a : Json, b : Json) -> Bool {
   match (a, b) {
     (Null, Null) => true
@@ -105,17 +106,9 @@ pub fn json_value_equal(a : Json, b : Json) -> Bool {
 
 ///|
 /// N 的文本形态：JSON 文本 → 规范化紧凑文本（对拍锚与人工检视用）。
-/// 解析深度预算与 L0 同源（core/json 自带 max_nesting_depth）
+/// 解析走自持 json_parse（审 P3 单源化：原 core/json 路径参数 deprecated、
+/// 重复键静默、错误无行列——D-11 全语义归一到自家解析器）
 pub fn normalize_json_text(text : String) -> String raise Diag {
-  let j = @json.parse(text, max_nesting_depth=MAX_DEPTH) catch {
-    e =>
-      raise Diag(
-        code=JJsonSyntax,
-        loc=dummy_loc(),
-        message="invalid JSON input: \{e}",
-        help=None,
-        path="",
-      )
-  }
+  let j = json_parse(text, fname="<json>")
   normalize_json(j).stringify()
 }

@@ -68,6 +68,11 @@ priv enum NumParse {
 /// 整数全过 Int64 累加器——溢出即 Overflow（D-2 超 Int64 诚实拒绝的判据）
 fn numeric_text(raw : String) -> NumParse {
   let s = raw.replace(old="_", new="")
+  // Int64 下界 -2^63 是唯一超出「正数累积界 2^63-1」的可表示值（审 P3 误拒）；
+  // 累加器走 UInt 不可行——前置特判（十进制唯一文本，确定性无损）
+  if s == "-9223372036854775808" {
+    return Ok(s, -9223372036854775808L)
+  }
   if s == "" {
     return Illegal
   }
