@@ -53,6 +53,8 @@ priv struct StructDef {
 priv struct EnumDef {
   name : String
   variants : Array[String] // 无参构造器名（降级投影 = 变体名字符串）
+  payload_variants : Array[String] // 带单参构造器名（D-5 转正：tag 对象展开）
+  payload_types : Map[String, JType] // 变体名 → 形参类型（payload 求值期望）
 }
 
 ///|
@@ -106,13 +108,28 @@ fn collect_tyenv(impls : @list.List[@syntax.Impl]) -> TypeEnv raise Diag {
               )
             }
             let vs : Array[String] = []
+            let pvs : Array[String] = []
+            let pts : Map[String, JType] = Map([])
             for c in ctors {
               match c.args {
-                Some(_) => () // 带参构造器：v1 不入变体表（字面量侧拒）
+                Some(arg_list) => {
+                  // D-5 转正：恰单形参的构造器入 payload 表（多参仍拒——
+                  // 降级投影单值语义装不下多参）
+                  let arr = arg_list.to_array()
+                  if arr.length() == 1 {
+                    pvs.push(c.name.name)
+                    pts[c.name.name] = parse_type(arr[0].ty)
+                  }
+                }
                 None => vs.push(c.name.name)
               }
             }
-            enums[name] = { name, variants: vs, }
+            enums[name] = {
+              name,
+              variants: vs,
+              payload_variants: pvs,
+              payload_types: pts,
+            }
           }
           _ => () // 其余 TypeDecl 形态：引用到时按 JTUnsupported 报
         }

@@ -137,7 +137,21 @@ fn render_value(
       for e in elems {
         parts.push(render_value(table, e, elem_ty))
       }
-      "[\{parts.join(", ")}]"
+      // #9 排版：≥2 元素逐元素折行（catalog 77 卡曾单行 13354 字符——一行
+      // 改动整行 diff 换；折行后单卡行级 diff）；0/1 元素保持内联
+      if parts.length() >= 2 {
+        let buf = StringBuilder()
+        buf.write_string("[\n")
+        for p in parts {
+          buf.write_string("  ")
+          buf.write_string(p)
+          buf.write_string(",\n")
+        }
+        buf.write_string("]")
+        buf.to_string()
+      } else {
+        "[\{parts.join(", ")}]"
+      }
     }
     (Object(o), Some(JTStruct(name))) => {
       let entries : Array[String] = []

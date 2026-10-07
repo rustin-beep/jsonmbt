@@ -23,6 +23,7 @@ pub(all) enum JCode {
   JUnknownField // J3005 未知字段（struct 无此字段）
   JMissingField // J3006 缺必填字段
   JDupField // J3007 重复字段
+  JTagCollision // J3008 enum payload 字段与 tag 键（case）撞车——D-5 转正规格
   JEmptyArr // J4001 孤立空数组：元素类型无线索（D-1 阻断，两级启发后仍无解）
   JEmptyObj // J4002 空对象：无字段可推（D-1 空对象单独形态）
   JAllNull // J4003 全 null：Option 基型无信息（D-1 家族）
@@ -56,6 +57,7 @@ pub fn JCode::num(self : JCode) -> String {
     JUnknownField => "J3005"
     JMissingField => "J3006"
     JDupField => "J3007"
+    JTagCollision => "J3008"
     JEmptyArr => "J4001"
     JEmptyObj => "J4002"
     JAllNull => "J4003"

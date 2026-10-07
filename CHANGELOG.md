@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Added（§8 二次裁定：D-5 键集漂移转正）
+
+- enum 带单参构造器字面量入 L0：降级投影 = tag 对象展开（payload 字段进顶层 + `"case"` 键；标量 payload 加 `"value"` 键）
+- tag 键冲突即拒：payload struct 含 `case` 字段 → J3008（不静默覆盖）
+- import 侧不自动转（缺键异构仍拒——拼错 vs 真可选无解 + 数据错误静默类型化违反 fail loud）；建模入口 = emitter 直产 / 人工改写
+- vm_diff 实例：618 案例四键集 enum 建模，check/build 绿、两次 build 逐字节一致、除 tag 键全等 0 diff、变体分布 602/9/5/2 精确对上
+
 ### Added
 
 - `jsonmbt build/check/import` CLI 三动词（D-10 rc 五值表：0/1/2/4 已占用，3 保留）

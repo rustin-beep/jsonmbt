@@ -240,20 +240,16 @@ fn l0_expr(
           None =>
             raise not_literal(loc, "Some(...) with non-positional arguments")
         }
-      } else {
-        // 带 payload 构造器（如 E(3032)）：v1 观察项（§8 裁定附带——投影
-        // 无自然 JSON 形态）；给可行动提示
-        if func is Constr(constr~, ..) {
-          raise Diag(
-            code=JNotLiteral,
-            loc~,
-            message="constructor '\{constr.name.name}' with payload",
-            help=Some(
-              "v1 supports payload-less enum variants only; model E(3032) as full variants (E3032_UnknownChar) or a struct field",
-            ),
-            path="",
-          )
+        // 带 payload 构造器：D-5 转正（§8 2026-10-07 二次裁定）——enum 单
+        // payload 构造器字面量入 L0，降级投影 = tag 对象展开（payload 字段
+        // 进顶层 + "case" tag 键）；标量 payload = {"case":名,"value":值}
+      } else if func is Constr(constr~, ..) && args.length() == 1 {
+        match args.head() {
+          Some({ value, kind: Positional, }) =>
+            payload_case(env, enums, constr.name.name, value, ty, depth, loc)
+          _ => raise not_literal(loc, "constructor with non-positional payload")
         }
+      } else {
         raise not_literal(loc, "function call")
       }
     }
@@ -324,10 +320,100 @@ fn resolve_custom(
 }
 
 ///|
+/// 带 payload 构造器字面量（D-5 转正，§8 二次裁定 2026-10-07）：
+/// 期望 enum 单参变体 → 降级投影 = tag 对象展开：
+///   struct payload：{"case": 变体名, ...payload 字段展开进顶层}
+///   标量 payload：{"case": 变体名, "value": payload}
+/// tag 键冲突即拒（payload struct 含 "case" 字段 → J3008——D-5 规格：
+/// 构造器名与 payload 键撞车显式报错，不静默覆盖）
+fn payload_case(
+  env : Map[String, StructDef],
+  enums : Map[String, EnumDef],
+  variant : String,
+  payload : @syntax.Expr,
+  ty : JType?,
+  depth : Int,
+  loc : @basic.Location,
+) -> Json raise Diag {
+  match ty {
+    Some(JTEnum(name)) | Some(JTOption(JTEnum(name))) => {
+      // 变体存在性：带参变体在 EnumDef.payload_variants（与无参表分开收）
+      let def = lookup_enum(enums, name, loc)
+      if not(def.payload_variants.contains(variant)) {
+        raise Diag(
+          code=JFieldType,
+          loc~,
+          message="enum '\{name}' has no payload variant '\{variant}'",
+          help=Some("payload variants: \{def.payload_variants.join(" ")}"),
+          path="",
+        )
+      }
+      // payload 求值：期望类型 = 该变体的形参类型（enum 定义处收）
+      let arg_ty = def.payload_types.get(variant)
+      let pj = l0_expr(env, enums, payload, arg_ty, depth + 1)
+      // tag 对象展开
+      let obj : Map[String, Json] = Map([])
+      match pj {
+        Object(fields) => {
+          if fields.contains("case") {
+            raise Diag(
+              code=JTagCollision,
+              loc~,
+              message="payload struct of '\{variant}' has a field named 'case' (tag key collision)",
+              help=Some(
+                "rename the field, or use a payload-less variant — the degraded object must carry the 'case' tag",
+              ),
+              path="",
+            )
+          }
+          obj["case"] = Json::string(variant)
+          fields.each(fn(k, v) { obj[k] = v })
+          Json::object(obj)
+        }
+        other => {
+          obj["case"] = Json::string(variant)
+          obj["value"] = other
+          Json::object(obj)
+        }
+      }
+    }
+    Some(other) =>
+      raise type_mismatch(
+        loc,
+        other.show(),
+        "payload variant '\{variant}'",
+        help=Some("payload enum literals need an enum-typed field"),
+      )
+    None =>
+      raise not_literal(loc, "payload variant '\{variant}' (no type context)")
+  }
+}
+
+///|
+fn lookup_enum(
+  enums : Map[String, EnumDef],
+  name : String,
+  loc : @basic.Location,
+) -> EnumDef raise Diag {
+  match enums.get(name) {
+    Some(def) => def
+    None =>
+      raise Diag(
+        code=JFieldType,
+        loc~,
+        message="enum '\{name}' is not defined in this file",
+        help=Some(
+          ".json.mbt is single-file; declare the enum alongside the structs",
+        ),
+        path="",
+      )
+  }
+}
+
+///|
 /// 无参构造器字面量的 enum 案（§8 裁定）：期望 JTEnum → 查变体表 →
 /// 投影 = 变体名字符串；变体不存在 = J3004（jsonmbt 侧防线，对齐 moon
-/// [4031] 的写时红）；带 payload 构造器 v1 仍拒（投影无自然 JSON 形态，
-/// 观察项——§8 裁定附带）
+/// [4031] 的写时红）
 fn enum_case(
   enums : Map[String, EnumDef],
   variant : String,
