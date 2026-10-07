@@ -328,6 +328,44 @@ func caseStderrLineContract(exe, dir string) error {
 	return nil
 }
 
+// cli-hints（#6-2/#6-3）：import 落盘提示 moon fmt；build 未带 --pretty
+// 提示字节锚定风险（带 --pretty 时静默）
+func caseCliHints(exe, dir string) error {
+	writeFile(dir, "h.json", "{\"k\": 1}\n")
+	rc, _, stderr0, err := runExe(exe, dir, "import", "h.json")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("import rc=%d err=%v", rc, err)
+	}
+	if !strings.Contains(string(stderr0), "moon fmt") {
+		return fmt.Errorf("import 应提示 moon fmt，got %q", stderr0)
+	}
+	rc, _, stderr1, err := runExe(exe, dir, "build", "h.json.mbt")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("build rc=%d err=%v stderr=%s", rc, err, stderr1)
+	}
+	if !strings.Contains(string(stderr1), "--pretty") {
+		return fmt.Errorf("build 缺 --pretty 应 hint，got %q", stderr1)
+	}
+	rc, _, stderr2, err := runExe(exe, dir, "build", "--pretty", "h.json.mbt")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("build --pretty rc=%d err=%v", rc, err)
+	}
+	if len(stderr2) != 0 {
+		return fmt.Errorf("--pretty 应静默，got %q", stderr2)
+	}
+	// --indent 1（#6-1）：1 空格缩进形态锚
+	tSrc := "pub let t = { \"a\": 1, \"b\": [1] }\n"
+	rc, out, _, err := runExeWithStdin(exe, dir, tSrc, "build", "--pretty", "--indent", "1", "-")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("indent rc=%d err=%v", rc, err)
+	}
+	want := []byte("{\n \"a\": 1,\n \"b\": [\n  1\n ]\n}\n")
+	if !bytes.Equal(bytes.TrimRight(out, "\r\n"), bytes.TrimRight(want, "\r\n")) {
+		return fmt.Errorf("--indent 1 形态不符:\n%q", out)
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"probe-samples-golden", caseProbeSamples},
@@ -337,6 +375,7 @@ var cases = []testCase{
 	{"pretty-vs-go-encoder", casePrettyVsGoEncoder},
 	{"pretty-key-order", casePrettyKeyOrder},
 	{"stderr-line-contract", caseStderrLineContract},
+	{"cli-hints", caseCliHints},
 }
 
 func defaultExe() string {

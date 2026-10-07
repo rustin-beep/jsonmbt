@@ -24,10 +24,11 @@ pub fn build_source(
   path? : String = "",
   expected_name? : String,
   pretty? : Bool = false,
+  indent? : Int = 2,
 ) -> String raise Diag {
   let doc = analyze(src, path~, expected_name?)
   if pretty {
-    build_value_of(doc).stringify(indent=2) + "\n"
+    build_value_of(doc).stringify(indent~) + "\n"
   } else {
     build_value_of(doc).stringify()
   }

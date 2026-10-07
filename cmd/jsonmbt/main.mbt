@@ -72,6 +72,22 @@ fn json_stem_of(path : String) -> String? {
 ///|
 /// 扫描输出目标同目录下其他 .mbt/.json.mbt 的 pub struct 名（跨文件去重
 /// 的已占名集合）
+///|
+/// --indent N 的小数字解析（0..99——无外部解析依赖）
+fn parse_small_uint(s : String) -> Int? {
+  if s.length() == 0 || s.length() > 2 {
+    return None
+  }
+  let mut v = 0
+  for c in s {
+    if c < '0' || c > '9' {
+      return None
+    }
+    v = v * 10 + (c.to_int() - '0'.to_int())
+  }
+  Some(v)
+}
+
 fn scan_taken_struct_names(path : String) -> Array[String] {
   let names : Array[String] = []
   if path == "-" {
@@ -214,6 +230,11 @@ fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
     }
     return 0
   }
+  // #6-2：import 产物不是 moon fmt 的稳定形态（fmt 会补 ///| 与折行）
+  // 接入 moon 静态门禁前须 moon fmt 归一——假绿源（Vitro 批②实锤）
+  write_stderr(
+    "jsonmbt: hint: run `moon fmt \{target}` before wiring moon checks — import output is not fmt-stable yet",
+  )
   atomic_write(target, outcome.content) catch {
     e => if e is @src.Diag(..) { return print_diag_exit(e) } else { return 4 }
   }
@@ -322,6 +343,7 @@ fn main_rc() -> Int {
   let mut out_opt : String? = None
   let mut do_check = false
   let mut do_pretty = false
+  let mut do_indent = 2 // --pretty 缩进宽度（#6-1：1 空格手写基线可字节对齐）
   let mut i = 2
   while i < args.length() {
     let a = args[i]
@@ -337,6 +359,21 @@ fn main_rc() -> Int {
     } else if a == "--pretty" {
       do_pretty = true
       i = i + 1
+    } else if a == "--indent" {
+      if i + 1 >= args.length() {
+        return jdiag_exit(@src.JUsage, "--indent requires a number (e.g. --indent 1|2|4)")
+      }
+      match parse_small_uint(args[i + 1]) {
+        Some(n) =>
+          if n <= 16 {
+            do_indent = n
+          } else {
+            return jdiag_exit(@src.JUsage, "--indent must be 0..16")
+          }
+        None =>
+          return jdiag_exit(@src.JUsage, "--indent requires a number (e.g. --indent 1|2|4)")
+      }
+      i = i + 2
     } else if a == "-h" || a == "--help" {
       return usage()
     } else {
@@ -371,7 +408,7 @@ fn main_rc() -> Int {
   }
   let mut rc = 0
   for p in paths {
-    let r = run_one(verb, p, out_opt, do_pretty)
+    let r = run_one(verb, p, out_opt, do_pretty, do_indent)
     if r != 0 {
       rc = r
     }
@@ -385,6 +422,7 @@ fn run_one(
   path : String,
   out_opt : String?,
   pretty : Bool,
+  indent : Int,
 ) -> Int {
   let src = read_input(path) catch {
     e =>
@@ -409,7 +447,7 @@ fn run_one(
     return 0
   }
   // build：校验先行，失败零产物（D-8 ①）；--pretty 与 Go encoder 逐字节对齐
-  let product = @src.build_source(src, path=display, expected_name?, pretty~) catch {
+  let product = @src.build_source(src, path=display, expected_name?, pretty~, indent~) catch {
     e =>
       if e is Diag(..) {
         return print_diag_exit(e)
@@ -436,6 +474,13 @@ fn run_one(
   let target = match out_opt {
     Some(o) => o
     None => path[:path.length() - ".json.mbt".length()].to_owned() + ".json"
+  }
+  // #6-3：未加 --pretty 的"沉默错形态"提示——下游按字节指纹锚定时
+  // 紧凑产物会打翻指纹，且报错指向"数据变了"而非"命令漏了参数"
+  if not(pretty) && path != "-" {
+    write_stderr(
+      "jsonmbt: hint: build without --pretty emits compact JSON; if a downstream anchors by byte fingerprint, re-run with --pretty [--indent N]",
+    )
   }
   atomic_write(target, product) catch {
     e => if e is Diag(..) { return print_diag_exit(e) } else { return 4 }
