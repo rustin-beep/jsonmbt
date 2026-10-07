@@ -93,6 +93,8 @@ priv struct ShapeGroup {
   fields : Array[FieldSamples] // 按首见样本键序
   field_index : Map[String, Int]
   mut resolved_name : String // 定名后回填（walk 期间 JTStruct 名即此）
+  keys : Array[String] // 首见键序（#11：诊断报字段集差异，不泄漏派生类型名）
+  mut count : Int // 样本计数（分布计数——人工建模分组直接可用）
 }
 
 ///|
@@ -393,6 +395,8 @@ fn walk_as_struct(
       fields: [],
       field_index: Map([]),
       resolved_name: "",
+      keys,
+      count: 0,
     }
     for k in keys {
       g.field_index[k] = g.fields.length()
@@ -412,6 +416,7 @@ fn walk_as_struct(
     ctx.groups[sig].resolved_name = ctx.name_cache[sig]
   }
   let g = ctx.groups[sig]
+  g.count = g.count + 1
   let ks : Array[String] = []
   o.each(fn(k, _) { ks.push(k) })
   for k in ks {
@@ -491,28 +496,72 @@ fn lub(
       if s1 == s2 {
         JTStruct(s1)
       } else {
-        // 键集漂移（缺键致签名分裂）是 D-5 域：v1 不做 Option 缺省——
-        // help 明示出路（审 P2：可行动性，防用户误判为不兼容数据）
-        raise Diag(
-          code=if in_array {
-            JHeteroArr
-          } else if at_map {
-            JMixedKeys
-          } else {
-            JHeteroField
-          },
-          loc=dummy_loc(),
-          message="incompatible object shapes across samples: \{s1} vs \{s2}",
-          help=Some(
-            "if objects differ by missing keys (optional fields), v1 does not auto-default them (D-5) — add the key to all samples, or hand-model the field as Option[T]",
-          ),
-          path=ctx.fname,
-        )
+        // 键集漂移（缺键致签名分裂）是 D-5 域。#11：报**字段集差异 + 分布
+        // 计数**（用户视角的真相），不泄漏派生类型名（Src_sha/Src_sha2
+        // 是 shape inference 内部命名，无法定位）
+        raise keyset_drift_diag(ctx, in_array, at_map)
       }
     (JTMap(_, v1), JTMap(_, v2)) => JTMap(JTString, lub(ctx, v1, v2, in_array~))
     (JTNullLike, t) | (t, JTNullLike) => t // null 由上层聚合 Option
     _ => raise hetero_diag(ctx, in_array, "\{a.show()} vs \{b.show()}", at_map~)
   }
+}
+
+///|
+/// 键集漂移诊断（#11）：报字段集差异 + 分布计数（按样本数降序），不泄漏
+/// 派生类型名——人工建模 enum 分组直接可用（如 ×602 {...} / ×9 {...}）
+fn keyset_drift_diag(
+  ctx : InferCtx,
+  in_array : Bool,
+  at_map : Bool,
+) -> Diag raise Diag {
+  let rows : Array[String] = []
+  let mut total = 0
+  for sig in ctx.group_order {
+    let g = ctx.groups[sig]
+    if g.count > 0 {
+      rows.push("×\{g.count} { \{g.keys.join(", ")} }")
+      total = total + g.count
+    }
+  }
+  // 计数降序（稳定：同数按首见序）
+  let sorted = rows.copy()
+  sorted.sort_by(fn(a, b) { cmp_rows(b, a) })
+  raise Diag(
+    code=if in_array {
+      JHeteroArr
+    } else if at_map {
+      JMixedKeys
+    } else {
+      JHeteroField
+    },
+    loc=dummy_loc(),
+    message="incompatible object shapes across samples (D-5 key-set drift): \{sorted.length()} distinct key sets in \{total} samples: \{sorted.join("; ")}",
+    help=Some(
+      "key-set drift is not auto-converted — hand-model each key set as an enum variant (D-5), or make the samples uniform",
+    ),
+    path=ctx.fname,
+  )
+}
+
+///|
+fn cmp_rows(a : String, b : String) -> Int {
+  // "×602 { ... }" 前缀数字比较
+  fn count_of(s : String) -> Int {
+    let stop = match s.find(" ") {
+      Some(i) => i
+      None => s.length()
+    }
+    let mut v = 0
+    for c in s[1:stop] {
+      if c < '0' || c > '9' {
+        return 0
+      }
+      v = v * 10 + (c.to_int() - '0'.to_int())
+    }
+    v
+  }
+  count_of(a).compare(count_of(b))
 }
 
 ///|

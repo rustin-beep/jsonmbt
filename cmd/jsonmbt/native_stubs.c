@@ -95,3 +95,12 @@ MOONBIT_FFI_EXPORT int jsonmbt_rename(moonbit_bytes_t from, int32_t from_len,
   return r;
 #endif
 }
+
+MOONBIT_FFI_EXPORT int jsonmbt_run_cmd(moonbit_bytes_t cmd, int32_t len) {
+  char *c = (char *)malloc((size_t)len + 1);
+  memcpy(c, cmd, (size_t)len);
+  c[len] = 0;
+  int rc = system(c);
+  free(c);
+  return rc;
+}

@@ -134,7 +134,12 @@ fn filepath_dir(path : String) -> String {
 }
 
 ///|
-fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
+fn run_import(
+  path : String,
+  out_opt : String?,
+  check : Bool,
+  fmt : Bool,
+) -> Int {
   let src = read_input(path) catch {
     e =>
       if e is @src.Diag(..) {
@@ -190,6 +195,12 @@ fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
     print_hint(h)
   }
   let target = import_target
+  if check && fmt {
+    return jdiag_exit(
+      @src.JUsage,
+      "--fmt writes to the product file — incompatible with --check (no write side effects)",
+    )
+  }
   if check {
     // 幂等闸（纪律 11）：重算产物与磁盘比对（行尾归一）；漂移 rc 2（D-10）
     let existing = Some(@fs.read_file_to_string(target)) catch { _ => None }
@@ -235,6 +246,21 @@ fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
   )
   atomic_write(target, outcome.content) catch {
     e => if e is @src.Diag(..) { return print_diag_exit(e) } else { return 4 }
+  }
+  if fmt {
+    // #10：产物 fmt 归一（spawn moon fmt 单文件）——机器写回域 freeze 循环
+    // 一步到位（紧凑产物 670 行 vs fmt 形态 3779 行的循环级 diff 问题）。
+    // 版本锁定声明：fmt 形态随 moon 工具链版本——升级 moon 后循环产物可能
+    // 整体重排一次（一次性 diff，属预期，见 #10 边界）
+    let cmd = "moon fmt \"\{target}\""
+    let bytes = @unicode.to_utf8_bytes(cmd)
+    let rc = jsonmbt_run_cmd(bytes, bytes.length())
+    if rc != 0 {
+      return jdiag_exit(
+        @src.JIO,
+        "moon fmt failed (rc=\{rc}) on '\{target}' — is the moon toolchain installed?",
+      )
+    }
   }
   0
 }
@@ -340,6 +366,7 @@ fn main_rc() -> Int {
   let paths : Array[String] = []
   let mut out_opt : String? = None
   let mut do_check = false
+  let mut do_fmt = false // import --fmt（#10）：产物落盘后跑 moon fmt 归一
   let mut do_pretty = false
   let mut do_indent : Int? = None // --pretty 缩进宽度（#6-1）；None = 未给（提示判据）
   let mut i = 2
@@ -353,6 +380,9 @@ fn main_rc() -> Int {
       i = i + 2
     } else if a == "--check" {
       do_check = true
+      i = i + 1
+    } else if a == "--fmt" {
+      do_fmt = true
       i = i + 1
     } else if a == "--pretty" {
       do_pretty = true
@@ -416,7 +446,7 @@ fn main_rc() -> Int {
         "--indent applies to build only (import output shape is generator-defined)",
       )
     }
-    return run_import(paths[0], out_opt, do_check)
+    return run_import(paths[0], out_opt, do_check, do_fmt)
   }
   if paths.length() > 1 && out_opt is Some(_) {
     return jdiag_exit(@src.JUsage, "-o accepts a single input")

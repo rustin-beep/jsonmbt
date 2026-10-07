@@ -36,3 +36,11 @@ fn jsonmbt_write_stdout(data : Bytes, len : Int) -> Unit {
   let _ = len
   abort("stdout is only available in the native build")
 }
+
+///|
+#cfg(not(target="native"))
+fn jsonmbt_run_cmd(cmd : Bytes, len : Int) -> Int {
+  let _ = cmd
+  let _ = len
+  abort("run_cmd is only available in the native build")
+}
