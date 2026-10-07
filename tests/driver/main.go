@@ -267,6 +267,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "jsonmbt exe 未找到：先 MOON_CC=clang moon build --target native cmd/jsonmbt，或用 -exe 指定")
 		os.Exit(2)
 	}
+	// 用例各自把子进程工作目录切到临时目录（cmd.Dir = dir），若此处是相对路径，
+	// 子进程会相对临时目录解析 exe → 全量 fork/exec 失败（CI 曾由此 5/5 全红）。
+	// 防线不依赖调用方传对路径形态：入参一律转绝对路径。
+	if abs, err := filepath.Abs(exe); err == nil {
+		exe = abs
+	}
 	if err := exeFreshness(exe); err != nil {
 		fmt.Printf("FAIL exe-freshness-gate: %v\n", err)
 		os.Exit(1)

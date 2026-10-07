@@ -51,6 +51,12 @@ jobs:
           clang --version
           go version
 
+      # setup-moonbit 只装二进制，registry 索引未初始化 → 依赖解析阶段即红：
+      # "Failed to resolve registry dependency ... module was not found in the registry"
+      # （前置告警即 "you may need to run `moon update` to update the registry"）。
+      - name: 同步 registry 索引
+        run: moon update
+
       # L1 内层
       - name: L1-a build（native，clang）
         run: moon build --target native
