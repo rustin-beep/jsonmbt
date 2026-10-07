@@ -2,7 +2,7 @@ name = "vitro/jsonmbt"
 
 version = "0.1.0"
 
-readme = "docs/PLAN.md"
+readme = "README.md"
 
 repository = "https://github.com/rustin-beep/jsonmbt"
 

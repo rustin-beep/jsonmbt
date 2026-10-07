@@ -22,6 +22,8 @@ pub fn normalize_json(Json) -> Json
 
 pub fn normalize_json_text(String) -> String raise Diag
 
+pub fn sanitize_stem(String) -> String
+
 pub fn strip_jsonc(String) -> String
 
 // Errors
