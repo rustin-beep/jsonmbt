@@ -9,6 +9,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -64,7 +65,7 @@ func caseEmdashStderr(exe, dir string) error {
 		return fmt.Errorf("rc = %d, want 1", rc)
 	}
 	want := []byte("jsonmbt: error [J2003] j.json.mbt:4:1 top-level binding is 'server' but the file stem is 'j'\n" +
-		"  help: rename the binding (or the file) so they match — this keeps one name per document")
+		"  help: rename the binding (or the file) so they match — this keeps one name per document\n") // 尾 \n = 行契约（审 P2-2）
 	if !bytes.Equal(stderr, want) {
 		return fmt.Errorf("stderr 逐字节不符（golden vs 实际）：\n--want--\n%q\n--got--\n%q", want, stderr)
 	}
@@ -231,12 +232,111 @@ func caseProbeSamples(exe, dir string) error {
 	return nil
 }
 
+// pretty-vs-go-encoder：--pretty 产物与 Go json.Encoder 逐字节对拍（前提
+// 限定：键序=源序——Go struct 字段声明序；Go map 序列化走字典序不在此
+// 对拍域，见 pretty-key-order 用例锚定 jsonmbt 自身源序语义）。审 P1：
+// 该卖点此前零门禁，宣称长期成立却无对拍——本用例即补牙。
+func casePrettyVsGoEncoder(exe, dir string) error {
+	type inner struct {
+		B int      `json:"b"`
+		A []string `json:"a"`
+	}
+	type doc struct {
+		Z     inner  `json:"z"`
+		Title string `json:"title"`
+		Count int64  `json:"count"`
+		OK    bool   `json:"ok"`
+		Empty []int  `json:"empty"`
+		Note  string `json:"note"`
+	}
+	d := doc{inner{2, []string{"x", "y"}}, "títle—em", 9223372036854775807, true, []int{}, "a\"q\n"}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(d); err != nil {
+		return err
+	}
+	want := buf.Bytes()
+	src := "pub struct Z {\n" +
+		"  b : Int\n" +
+		"  a : Array[String]\n" +
+		"}\n" +
+		"pub struct Doc {\n" +
+		"  z : Z\n" +
+		"  title : String\n" +
+		"  count : Int64\n" +
+		"  ok : Bool\n" +
+		"  empty : Array[Int]\n" +
+		"  note : String\n" +
+		"}\n" +
+		"pub let doc : Doc = Doc::{\n" +
+		"  z: Z::{ b: 2, a: [\"x\", \"y\"] },\n" +
+		"  title: \"títle—em\",\n" +
+		"  count: 9223372036854775807,\n" +
+		"  ok: true,\n" +
+		"  empty: [],\n" +
+		"  note: \"a\\\"q\\n\",\n" +
+		"}\n"
+	writeFile(dir, "doc.json.mbt", src)
+	if rc, _, stderr, err := runExe(exe, dir, "build", "--pretty", "doc.json.mbt"); err != nil || rc != 0 {
+		return fmt.Errorf("build rc=%d err=%v stderr=%s", rc, err, stderr)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "doc.json"))
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(bytes.TrimRight(got, "\r\n"), bytes.TrimRight(want, "\r\n")) {
+		return fmt.Errorf("--pretty 与 Go encoder 字节不符\n--want--\n%q\n--got--\n%q", want, got)
+	}
+	return nil
+}
+
+// pretty-key-order：键序=源序语义锚（非字典序）——jsonmbt 的确定性承诺
+// 是源序投影；防止把 --pretty "修"成字典序去对齐 Go map（另一语义域）
+func casePrettyKeyOrder(exe, dir string) error {
+	oSrc := "pub let o = { \"b\": 1, \"a\": 2 }\n"
+	writeFile(dir, "o.json.mbt", oSrc)
+	rc, out, _, err := runExeWithStdin(exe, dir, oSrc, "build", "--pretty", "-")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("rc=%d err=%v", rc, err)
+	}
+	want := []byte("{\n  \"b\": 1,\n  \"a\": 2\n}\n")
+	if !bytes.Equal(bytes.TrimRight(out, "\r\n"), bytes.TrimRight(want, "\r\n")) {
+		return fmt.Errorf("键序应保持源序（b,a）非字典序（a,b）:\n%q", out)
+	}
+	return nil
+}
+
+// stderr-line-contract：多诊断连发不粘行（审 P2-2 红证常驻化）
+func caseStderrLineContract(exe, dir string) error {
+	writeFile(dir, "c1.json.mbt", "pub let c1 = 1 +\n")
+	writeFile(dir, "c2.json.mbt", "pub let c2 = 2 +\n")
+	rc, _, stderr, err := runExe(exe, dir, "check", "c1.json.mbt", "c2.json.mbt")
+	if err != nil || rc != 1 {
+		return fmt.Errorf("rc=%d err=%v", rc, err)
+	}
+	lines := strings.Split(strings.TrimRight(string(stderr), "\r\n"), "\n")
+	if len(lines) != 4 {
+		return fmt.Errorf("应 4 行（2 诊断 × 2 行），得 %d 行：%q", len(lines), stderr)
+	}
+	for i, l := range lines {
+		if strings.Contains(l, "literalsjsonmbt:") {
+			return fmt.Errorf("诊断粘行实锤（第 %d 行）: %q", i, l)
+		}
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"probe-samples-golden", caseProbeSamples},
 	{"build-stdout-deterministic", caseBuildDeterministic},
 	{"import-check-idempotent", caseImportCheckGate},
 	{"usage-rc4", caseUsageRC4},
+	{"pretty-vs-go-encoder", casePrettyVsGoEncoder},
+	{"pretty-key-order", casePrettyKeyOrder},
+	{"stderr-line-contract", caseStderrLineContract},
 }
 
 func defaultExe() string {

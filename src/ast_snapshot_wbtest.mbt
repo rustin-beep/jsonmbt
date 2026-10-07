@@ -35,7 +35,7 @@ fn ast_sig(e : @syntax.Expr) -> String {
     }
     Apply(func~, args~, ..) => {
       let inner : String = match args.head() {
-        Some({ value, kind: Positional }) => ast_sig(value)
+        Some({ value, kind: Positional, }) => ast_sig(value)
         _ => "?"
       }
       let fname = if func is Constr(constr~, ..) {

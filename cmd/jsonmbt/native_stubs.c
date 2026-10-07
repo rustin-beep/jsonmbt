@@ -40,6 +40,16 @@ MOONBIT_FFI_EXPORT moonbit_bytes_t jsonmbt_read_stdin(void) {
   return out;
 }
 
+MOONBIT_FFI_EXPORT void jsonmbt_write_stdout(moonbit_bytes_t data, int32_t len) {
+#ifdef _WIN32
+  // binary mode: no CRLF translation - product bytes must be stable across
+  // platforms (stdout sibling of issue #1 stderr fix; caught by L2 pretty case)
+  _setmode(_fileno(stdout), _O_BINARY);
+#endif
+  fwrite(data, 1, (size_t)len, stdout);
+  fflush(stdout);
+}
+
 MOONBIT_FFI_EXPORT void jsonmbt_write_stderr(moonbit_bytes_t data, int32_t len) {
 #ifdef _WIN32
   // binary mode: no CRLF translation - diagnostics channel (D-10) must be

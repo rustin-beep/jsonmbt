@@ -15,8 +15,10 @@ pub fn check_source(
 
 ///|
 /// 降级：.json.mbt 源 → JSON 文本（默认紧凑；pretty 形态与 Go
-/// json.Encoder SetIndent("", "  ") 逐字节一致含尾换行——真相源翻转场景
-/// 下游按字节指纹（sha）锚定时必须逐字节对齐，Vitro 门禁实锤）
+/// json.Encoder SetIndent("", "  ") 在「键序=源序」前提下逐字节一致
+/// 含尾换行（Go struct 序列化字段声明序=源序的场景，Vitro 门禁实测）；
+/// Go map 序列化走字典序、任意手写基线不承诺逐字节——那些场景的承诺
+/// 是值语义等价（审 P1 勘误：原表述缺前提限定））
 pub fn build_source(
   src : String,
   path? : String = "",
@@ -96,13 +98,14 @@ pub fn import_source(
   json_text : String,
   path? : String = "<json>",
   stem~ : String,
+  taken_names? : Array[String] = [],
 ) -> ImportOutcome raise Diag {
   // stem 前置清洗（化石批量实锤："array_address.c" 文件名直接作 stem 产
   // 非法 binding/类型名——曾靠生成保险丝兜底成 internal 错，现正名）
   let stem = sanitize_stem(stem)
   let stripped = strip_jsonc(json_text)
   let root = json_parse(stripped, fname=path)
-  let result = infer_shapes(root, stem~, fname=path)
+  let result = infer_shapes(root, stem=stem, fname=path, taken=taken_names)
   let content = generate_source(result, root, stem~, src_name=path)
   // 保险丝（审 P1-1 处方）：产物丢回自家校验器回吃——生成器任何非法输出
   // 在落盘前 fail loud（import 产物承诺 = 合法 .json.mbt，PLAN §1.3）

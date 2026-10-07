@@ -28,3 +28,11 @@ fn jsonmbt_rename(
   let _ = to_len
   abort("rename is only available in the native build")
 }
+
+///|
+#cfg(not(target="native"))
+fn jsonmbt_write_stdout(data : Bytes, len : Int) -> Unit {
+  let _ = data
+  let _ = len
+  abort("stdout is only available in the native build")
+}

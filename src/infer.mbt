@@ -103,6 +103,7 @@ priv struct InferCtx {
   name_cache : Map[String, String] // 签名 → struct 名
   hints : Array[Diag]
   hint_keys : Array[String] // tagged-enum 提示去重（按键名）
+  taken : Array[String] // 同目录已占类型名（跨文件去重——issue #4）
   stem : String
   fname : String
 }
@@ -127,6 +128,7 @@ fn infer_shapes(
   root : Json,
   stem~ : String,
   fname? : String = "<json>",
+  taken? : Array[String] = [],
 ) -> InferResult raise Diag {
   let ctx : InferCtx = {
     groups: Map([]),
@@ -135,6 +137,7 @@ fn infer_shapes(
     name_cache: Map([]),
     hints: [],
     hint_keys: [],
+    taken,
     stem,
     fname,
   }
@@ -244,7 +247,17 @@ fn finalize_empty_root(ctx : InferCtx, root_ty : JType) -> Unit raise Diag {
 
 ///|
 fn alloc_type_name(ctx : InferCtx, base : String) -> String {
-  let primed = if is_legal_type_name(base) { base } else { "Root" }
+  // issue #4：嵌套 struct 机器派生名（Id/Code 等）在同目录多文件时撞
+  // moon 包命名空间——后来者加 stem 前缀（先到先得，单文件零变化）
+  let primed0 = if is_legal_type_name(base) { base } else { "Root" }
+  if ctx.taken.contains(primed0) && primed0 != capitalize(ctx.stem) {
+    let prefixed = capitalize(ctx.stem) + primed0
+    if is_legal_type_name(prefixed) && !ctx.used_type_names.contains(prefixed) {
+      ctx.used_type_names.push(prefixed)
+      return prefixed
+    }
+  }
+  let primed = primed0
   if !ctx.used_type_names.contains(primed) {
     ctx.used_type_names.push(primed)
     return primed
@@ -478,7 +491,23 @@ fn lub(
       if s1 == s2 {
         JTStruct(s1)
       } else {
-        raise hetero_diag(ctx, in_array, "\{s1} vs \{s2}", at_map~)
+        // 键集漂移（缺键致签名分裂）是 D-5 域：v1 不做 Option 缺省——
+        // help 明示出路（审 P2：可行动性，防用户误判为不兼容数据）
+        raise Diag(
+          code=if in_array {
+            JHeteroArr
+          } else if at_map {
+            JMixedKeys
+          } else {
+            JHeteroField
+          },
+          loc=dummy_loc(),
+          message="incompatible object shapes across samples: \{s1} vs \{s2}",
+          help=Some(
+            "if objects differ by missing keys (optional fields), v1 does not auto-default them (D-5) — add the key to all samples, or hand-model the field as Option[T]",
+          ),
+          path=ctx.fname,
+        )
       }
     (JTMap(_, v1), JTMap(_, v2)) => JTMap(JTString, lub(ctx, v1, v2, in_array~))
     (JTNullLike, t) | (t, JTNullLike) => t // null 由上层聚合 Option

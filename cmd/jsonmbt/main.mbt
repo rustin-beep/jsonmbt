@@ -8,7 +8,10 @@
 fn write_stderr(s : String) -> Unit {
   // 长度必须是 UTF-8 字节数（s.length() 是码元数——多字节字符按码元数
   // 写入会截尾，issue #1：em-dash 每个多丢 2 字节）
-  let bytes = @unicode.to_utf8_bytes(s)
+  // 行契约（审 P2-2）：每条输出以换行收尾——多诊断连发（多文件）不得
+  // 粘行，否则下游按行解析破坏（...literalsjsonmbt: error... 实锤）
+  let s2 = if s.has_suffix("\n") { s } else { s + "\n" }
+  let bytes = @unicode.to_utf8_bytes(s2)
   jsonmbt_write_stderr(bytes, bytes.length())
 }
 
@@ -66,6 +69,56 @@ fn json_stem_of(path : String) -> String? {
 }
 
 ///|
+///|
+/// 扫描输出目标同目录下其他 .mbt/.json.mbt 的 pub struct 名（跨文件去重
+/// 的已占名集合）
+fn scan_taken_struct_names(path : String) -> Array[String] {
+  let names : Array[String] = []
+  if path == "-" {
+    return names
+  }
+  let dir = filepath_dir(path)
+  let entries = @fs.read_dir(dir) catch { _ => return names }
+  for e in entries {
+    if (e.has_suffix(".json.mbt") || e.has_suffix(".mbt")) && e != basename(path) {
+      let text = @fs.read_file_to_string(dir + "/" + e) catch {
+          _ => continue
+        }
+      for line in text.split("\n") {
+        if line.has_prefix("pub struct ") {
+          let rest : String = line[11:].to_owned()
+          let name = rest[:first_space_or_end(rest)].to_owned()
+          if name.length() > 0 {
+            names.push(name)
+          }
+        }
+      }
+    }
+  }
+  names
+}
+
+///|
+fn first_space_or_end(s : String) -> Int {
+  match s.find(" ") {
+    Some(i) => i
+    None => s.length()
+  }
+}
+
+///|
+fn filepath_dir(path : String) -> String {
+  let a = path.rev_find("/")
+  let b = path.rev_find("\\")
+  let cut = match (a, b) {
+    (Some(x), Some(y)) => if x > y { x } else { y }
+    (Some(x), None) => x
+    (None, Some(y)) => y
+    (None, None) => return "."
+  }
+  path[:cut].to_owned()
+}
+
 fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
   let src = read_input(path) catch {
     e =>
@@ -100,7 +153,15 @@ fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
       None => return jdiag_exit(@src.JUsage, "'\{path}' has no usable stem")
     }
   }
-  let outcome = @src.import_source(src, path=display, stem~) catch {
+  // issue #4：同目录已占类型名感知——嵌套 struct 撞 moon 包命名空间时
+  // 后来者自动加 stem 前缀（先到先得；单文件/不冲突零变化）
+  let taken : Array[String] = scan_taken_struct_names(path)
+  let outcome = @src.import_source(
+      src,
+      path=display,
+      stem=stem,
+      taken_names=taken,
+    ) catch {
     e =>
       if e is @src.Diag(..) {
         return print_diag_exit(e)
@@ -143,7 +204,13 @@ fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
               return 4
             }
         }
-      None => println(outcome.content)
+      None => {
+        // stdout 产物走二进制 stub：println 在 Windows 文本模式发 CRLF，
+        // 产物字节契约破坏（L2 pretty 用例实锤；issue #1 的 stdout 表亲）
+        let bytes = @unicode.to_utf8_bytes(outcome.content)
+        jsonmbt_write_stdout(bytes, bytes.length())
+        jsonmbt_write_stdout(@unicode.to_utf8_bytes("\n"), 1)
+      }
     }
     return 0
   }
@@ -342,7 +409,7 @@ fn run_one(
     return 0
   }
   // build：校验先行，失败零产物（D-8 ①）；--pretty 与 Go encoder 逐字节对齐
-  let product = @src.build_source(src, path=display, expected_name?, pretty=pretty) catch {
+  let product = @src.build_source(src, path=display, expected_name?, pretty~) catch {
     e =>
       if e is Diag(..) {
         return print_diag_exit(e)
@@ -357,7 +424,12 @@ fn run_one(
         atomic_write(o, product) catch {
           e => if e is Diag(..) { return print_diag_exit(e) } else { return 4 }
         }
-      None => println(product)
+      None => {
+        // 同 import：stdout 产物走二进制 stub（字节契约，issue #1 表亲）
+        let bytes = @unicode.to_utf8_bytes(product)
+        jsonmbt_write_stdout(bytes, bytes.length())
+        jsonmbt_write_stdout(@unicode.to_utf8_bytes("\n"), 1)
+      }
     }
     return 0
   }

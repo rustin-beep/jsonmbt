@@ -19,3 +19,8 @@ extern "C" fn jsonmbt_rename(
   to : Bytes,
   to_len : Int,
 ) -> Int = "jsonmbt_rename"
+
+///|
+#cfg(target="native")
+#borrow(data)
+extern "C" fn jsonmbt_write_stdout(data : Bytes, len : Int) -> Unit = "jsonmbt_write_stdout"

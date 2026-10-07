@@ -291,3 +291,18 @@ test "sanitize_stem : 空串/数字开头/大写/中文" {
   inspect(@src.sanitize_stem("Config"), content="config")
   inspect(@src.sanitize_stem("配置"), content="配置")
 }
+
+///|
+test "issue #4 防回归 : 跨文件撞名 stem 前缀（同目录后来者）" {
+  let a = do_import("{\"entries\":[{\"code\":1,\"title\":\"a\"}]}", stem="a")
+  // taken_names 模拟同目录已存在 a.json.mbt（其 struct 名 A/Code）
+  let b = @src.import_source(
+    "{\"payloads\":[{\"code\":1,\"title\":\"a\"}]}",
+    path="b.json",
+    stem="b",
+    taken_names=["A", "Code"],
+  )
+  inspect(a.contains("pub struct Code"), content="true") // 先到者零变化
+  inspect(b.content.contains("pub struct BCode"), content="true") // 后来者前缀
+  let _ = @src.build_source(b.content, path="b.json.mbt", expected_name="b") // 回吃合法
+}
