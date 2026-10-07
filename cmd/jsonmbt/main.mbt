@@ -69,10 +69,6 @@ fn json_stem_of(path : String) -> String? {
 }
 
 ///|
-///|
-/// 扫描输出目标同目录下其他 .mbt/.json.mbt 的 pub struct 名（跨文件去重
-/// 的已占名集合）
-///|
 /// --indent N 的小数字解析（0..99——无外部解析依赖）
 fn parse_small_uint(s : String) -> Int? {
   if s.length() == 0 || s.length() > 2 {
@@ -88,18 +84,20 @@ fn parse_small_uint(s : String) -> Int? {
   Some(v)
 }
 
-fn scan_taken_struct_names(path : String) -> Array[String] {
+///|
+fn scan_taken_struct_names(target : String) -> Array[String] {
+  // target = 即将写出的输出产物路径（审 P1：以输出目录为基准、排除输出
+  // 自身——上一轮自家嵌套 struct 不得算"已占名"，否则幂等闸打翻）
   let names : Array[String] = []
-  if path == "-" {
+  if target == "-" {
     return names
   }
-  let dir = filepath_dir(path)
+  let dir = filepath_dir(target)
   let entries = @fs.read_dir(dir) catch { _ => return names }
   for e in entries {
-    if (e.has_suffix(".json.mbt") || e.has_suffix(".mbt")) && e != basename(path) {
-      let text = @fs.read_file_to_string(dir + "/" + e) catch {
-          _ => continue
-        }
+    if (e.has_suffix(".json.mbt") || e.has_suffix(".mbt")) &&
+      e != basename(target) {
+      let text = @fs.read_file_to_string(dir + "/" + e) catch { _ => continue }
       for line in text.split("\n") {
         if line.has_prefix("pub struct ") {
           let rest : String = line[11:].to_owned()
@@ -135,6 +133,7 @@ fn filepath_dir(path : String) -> String {
   path[:cut].to_owned()
 }
 
+///|
 fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
   let src = read_input(path) catch {
     e =>
@@ -171,13 +170,15 @@ fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
   }
   // issue #4：同目录已占类型名感知——嵌套 struct 撞 moon 包命名空间时
   // 后来者自动加 stem 前缀（先到先得；单文件/不冲突零变化）
-  let taken : Array[String] = scan_taken_struct_names(path)
-  let outcome = @src.import_source(
-      src,
-      path=display,
-      stem=stem,
-      taken_names=taken,
-    ) catch {
+  // 审 P1 修正：①排除**输出产物自身**（原只排输入 .json——第二轮 import
+  // 把自家上一轮的嵌套 struct 当已占名 → B 级联漂移成 AB → --check 打翻）
+  // ②扫描基准 = **输出目录**（-o 跨目录时输入目录的扫描是瞄错的靶）
+  let import_target = match out_opt {
+    Some(o) => o
+    None => path[:path.length() - ext_len(path)].to_owned() + ".json.mbt"
+  }
+  let taken : Array[String] = scan_taken_struct_names(import_target)
+  let outcome = @src.import_source(src, path=display, stem~, taken_names=taken) catch {
     e =>
       if e is @src.Diag(..) {
         return print_diag_exit(e)
@@ -188,10 +189,7 @@ fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
   for h in outcome.hints {
     print_hint(h)
   }
-  let target = match out_opt {
-    Some(o) => o
-    None => path[:path.length() - ext_len(path)].to_owned() + ".json.mbt"
-  }
+  let target = import_target
   if check {
     // 幂等闸（纪律 11）：重算产物与磁盘比对（行尾归一）；漂移 rc 2（D-10）
     let existing = Some(@fs.read_file_to_string(target)) catch { _ => None }
@@ -343,7 +341,7 @@ fn main_rc() -> Int {
   let mut out_opt : String? = None
   let mut do_check = false
   let mut do_pretty = false
-  let mut do_indent = 2 // --pretty 缩进宽度（#6-1：1 空格手写基线可字节对齐）
+  let mut do_indent : Int? = None // --pretty 缩进宽度（#6-1）；None = 未给（提示判据）
   let mut i = 2
   while i < args.length() {
     let a = args[i]
@@ -361,17 +359,26 @@ fn main_rc() -> Int {
       i = i + 1
     } else if a == "--indent" {
       if i + 1 >= args.length() {
-        return jdiag_exit(@src.JUsage, "--indent requires a number (e.g. --indent 1|2|4)")
+        return jdiag_exit(
+          @src.JUsage,
+          "--indent requires a number 1..16 (e.g. --indent 1|2|4)",
+        )
       }
       match parse_small_uint(args[i + 1]) {
         Some(n) =>
-          if n <= 16 {
-            do_indent = n
+          if n >= 1 && n <= 16 {
+            do_indent = Some(n)
           } else {
-            return jdiag_exit(@src.JUsage, "--indent must be 0..16")
+            return jdiag_exit(
+              @src.JUsage,
+              "--indent must be 1..16 (0 is ambiguous — use --pretty for pretty, omit for compact)",
+            )
           }
         None =>
-          return jdiag_exit(@src.JUsage, "--indent requires a number (e.g. --indent 1|2|4)")
+          return jdiag_exit(
+            @src.JUsage,
+            "--indent requires a number 1..16 (e.g. --indent 1|2|4)",
+          )
       }
       i = i + 2
     } else if a == "-h" || a == "--help" {
@@ -401,6 +408,14 @@ fn main_rc() -> Int {
     if paths.length() != 1 {
       return usage()
     }
+    // 审 P3：import 的产物形态由生成器定（fmt-canonical），--indent 与它
+    // 无关——静默忽略是"沉默错形态"（与 #6-3 同罪），明确拒绝
+    if do_indent is Some(_) {
+      return jdiag_exit(
+        @src.JUsage,
+        "--indent applies to build only (import output shape is generator-defined)",
+      )
+    }
     return run_import(paths[0], out_opt, do_check)
   }
   if paths.length() > 1 && out_opt is Some(_) {
@@ -422,7 +437,7 @@ fn run_one(
   path : String,
   out_opt : String?,
   pretty : Bool,
-  indent : Int,
+  indent : Int?,
 ) -> Int {
   let src = read_input(path) catch {
     e =>
@@ -447,7 +462,13 @@ fn run_one(
     return 0
   }
   // build：校验先行，失败零产物（D-8 ①）；--pretty 与 Go encoder 逐字节对齐
-  let product = @src.build_source(src, path=display, expected_name?, pretty~, indent~) catch {
+  let product = @src.build_source(
+    src,
+    path=display,
+    expected_name?,
+    pretty~,
+    indent~,
+  ) catch {
     e =>
       if e is Diag(..) {
         return print_diag_exit(e)
@@ -477,6 +498,11 @@ fn run_one(
   }
   // #6-3：未加 --pretty 的"沉默错形态"提示——下游按字节指纹锚定时
   // 紧凑产物会打翻指纹，且报错指向"数据变了"而非"命令漏了参数"
+  if not(pretty) && indent is Some(_) && path != "-" {
+    write_stderr(
+      "jsonmbt: hint: --indent without --pretty has no effect — pretty output is required for indentation",
+    )
+  }
   if not(pretty) && path != "-" {
     write_stderr(
       "jsonmbt: hint: build without --pretty emits compact JSON; if a downstream anchors by byte fingerprint, re-run with --pretty [--indent N]",

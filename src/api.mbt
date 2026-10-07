@@ -24,11 +24,12 @@ pub fn build_source(
   path? : String = "",
   expected_name? : String,
   pretty? : Bool = false,
-  indent? : Int = 2,
+  indent? : Int? = None,
 ) -> String raise Diag {
   let doc = analyze(src, path~, expected_name?)
   if pretty {
-    build_value_of(doc).stringify(indent~) + "\n"
+    let width = indent.unwrap_or(2) // 未给 = 2（既有产物零变化）
+    build_value_of(doc).stringify(indent=width) + "\n"
   } else {
     build_value_of(doc).stringify()
   }
@@ -61,8 +62,14 @@ pub(all) struct ImportOutcome {
 /// stem → 合法 binding（label 域标识符）：非法字符→下划线、大写→小写、
 /// 数字/非法开头→x_ 前缀、空→x。类型命名（capitalize）共用此基。
 pub fn sanitize_stem(name : String) -> String {
+  // 审 P2-1：保留字文件名（test.json/type.json 等 16 个实测 15 个中招）
+  // 直接作 binding 是非法 MoonBit——同族 is_legal_label 查保留字而此路
+  // 漏了（保险丝曾兜成 internal 甩锅）；命中即 x_ 前缀
   if name == "" {
     return "x"
+  }
+  if is_reserved_label(name) {
+    return "x_" + name
   }
   let buf = StringBuilder()
   for ch in name {
@@ -73,7 +80,7 @@ pub fn sanitize_stem(name : String) -> String {
       c >= 0x80 {
       buf.write_char(ch)
     } else if ch >= 'A' && ch <= 'Z' {
-      buf.write_char(Char::from_int(c + 32))
+      buf.write_char((c + 32).unsafe_to_char())
     } else {
       buf.write_char('_')
     }
@@ -106,7 +113,7 @@ pub fn import_source(
   let stem = sanitize_stem(stem)
   let stripped = strip_jsonc(json_text)
   let root = json_parse(stripped, fname=path)
-  let result = infer_shapes(root, stem=stem, fname=path, taken=taken_names)
+  let result = infer_shapes(root, stem~, fname=path, taken=taken_names)
   let content = generate_source(result, root, stem~, src_name=path)
   // 保险丝（审 P1-1 处方）：产物丢回自家校验器回吃——生成器任何非法输出
   // 在落盘前 fail loud（import 产物承诺 = 合法 .json.mbt，PLAN §1.3）

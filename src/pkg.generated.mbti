@@ -6,13 +6,13 @@ import {
 }
 
 // Values
-pub fn build_source(String, path? : String, expected_name? : String) -> String raise Diag
+pub fn build_source(String, path? : String, expected_name? : String, pretty? : Bool, indent? : Int?) -> String raise Diag
 
 pub fn build_value(String, path? : String, expected_name? : String) -> Json raise Diag
 
 pub fn check_source(String, path? : String, expected_name? : String) -> Unit raise Diag
 
-pub fn import_source(String, path? : String, stem~ : String) -> ImportOutcome raise Diag
+pub fn import_source(String, path? : String, stem~ : String, taken_names? : Array[String]) -> ImportOutcome raise Diag
 
 pub fn json_parse(String, fname? : String) -> Json raise Diag
 

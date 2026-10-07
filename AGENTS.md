@@ -25,6 +25,6 @@
 
 ## 环境注意
 
-- 探针/生成物临时件放 `notes/` 或 `tmp/`，不进主包编译面（根目录 .mbt 同包全编译）。
+- 探针/生成物临时件放 `notes/` 或 `tmp/`。**注意：`tmp/<dir>/` 一旦放 `moon.pkg` 就会成为独立包进入全量 `moon check` 编译面**（审阅实测注入即红）——探针目录勿带 `moon.pkg`，实验完即删；根目录 .mbt 同包全编译。
 - 样本锚三层：JSON 输入 → 期望 `.json.mbt` → 期望降级产物——改一处连跑全部。
 - **`examples/` 与 `probe/samples/` 是 moon 包**（各有 `moon.pkg`）——里面的 `.json.mbt` 由此进入 moon 编译面受静态检查保护；**新增 `.json.mbt` 样本默认放这两个目录**，别另起无 `moon.pkg` 的目录（那就白写了）。

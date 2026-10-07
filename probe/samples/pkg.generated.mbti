@@ -1,0 +1,35 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "vitro/jsonmbt/probe/samples"
+
+// Values
+pub let server : Server
+
+pub let vitals : Vitals
+
+// Errors
+
+// Types and methods
+pub struct Inner {
+  x : Int
+  ratio : Double
+}
+
+pub struct Server {
+  port : Int
+  host : String
+  tags : Array[String]
+  retries : Int?
+}
+
+pub struct Vitals {
+  big : Int64
+  d : Double
+  inner : Inner
+  meta : Map[String, String]
+  ok : Bool
+  note : String
+}
+
+// Type aliases
+
+// Traits

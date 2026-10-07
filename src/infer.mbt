@@ -13,8 +13,8 @@ let reserved_labels : Array[String] = [
   "fn", "let", "mut", "const", "return", "match", "if", "else", "loop", "while",
   "for", "in", "break", "continue", "true", "false", "struct", "enum", "type", "trait",
   "impl", "pub", "priv", "package", "import", "test", "as", "extern", "raise", "try",
-  "catch", "defer", "guard", "when", "view", "extenum", "async", "backed", "where",
-  "is", "unit",
+  "catch", "defer", "guard", "when", "extenum", "async", "backed", "where", "is",
+  "unit",
 ]
 
 ///|

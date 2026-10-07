@@ -133,7 +133,7 @@ MOON_CC=clang moon build --target native --release
 
 ## 工程
 
-- 内层防线：`moon test` 语义锚（**当前 69 锚全绿**——计数真值以 `moon test` 运行结果为准，本文只引用）；外层防线：Go 黑盒驱动已上岗（`go run ./tests/driver`——CLI 进程契约 stderr 逐字节 golden / probe 样本黄金门禁 / 确定性断言 / 幂等闸证红 / exe 新鲜度门禁）——对外承诺的真防线在层 2。
+- 内层防线：`moon test` 语义锚（全绿——**计数真值以 `moon test` 运行结果为准，本文不写数字**——文档数字漂移教训）；外层防线：Go 黑盒驱动已上岗（`go run ./tests/driver`——CLI 进程契约 stderr 逐字节 golden / probe 样本黄金门禁 / 确定性断言 / 幂等闸证红 / exe 新鲜度门禁）——对外承诺的真防线在层 2。
 - 诊断体系与正/负样本锚纪律继承自 [Vitro](https://github.com/rustin-beep/vitro)（继承语言，不继承口音）。
 - MoonBit 工具链陷阱快照：[docs/MOONBIT_PITFALLS.md](docs/MOONBIT_PITFALLS.md)。
 

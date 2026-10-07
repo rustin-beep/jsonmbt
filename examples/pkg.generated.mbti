@@ -1,0 +1,19 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "vitro/jsonmbt/examples"
+
+// Values
+pub let server : Server
+
+// Errors
+
+// Types and methods
+pub struct Server {
+  port : Int
+  host : String
+  tags : Array[String]
+  retries : Int?
+}
+
+// Type aliases
+
+// Traits

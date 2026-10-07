@@ -306,3 +306,14 @@ test "issue #4 防回归 : 跨文件撞名 stem 前缀（同目录后来者）" 
   inspect(b.content.contains("pub struct BCode"), content="true") // 后来者前缀
   let _ = @src.build_source(b.content, path="b.json.mbt", expected_name="b") // 回吃合法
 }
+
+///|
+test "审 P2-1 : 保留字 stem 清洗（test.json 等 15/16 实测中招）" {
+  inspect(@src.sanitize_stem("test"), content="x_test")
+  inspect(@src.sanitize_stem("type"), content="x_type")
+  inspect(@src.sanitize_stem("match"), content="x_match")
+  inspect(@src.sanitize_stem("view"), content="view") // 非保留字零变化
+  // 端到端：保留字文件名 import → 产物合法可回吃
+  let out = do_import("{\"k\":1}", stem="test")
+  let _ = @src.build_source(out, path="t.json.mbt", expected_name="x_test")
+}

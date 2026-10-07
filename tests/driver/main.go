@@ -94,7 +94,9 @@ func caseBuildDeterministic(exe, dir string) error {
 
 // import-check-idempotent：幂等闸绿（rc 0）→ 篡改产物证红（rc 2 + J5001）。
 func caseImportCheckGate(exe, dir string) error {
-	writeFile(dir, "g.json", "{\"k\": [1, 2], \"u\": \"http://x/y\"}\n")
+	// 语料含嵌套对象（审 P1：原语料无嵌套 → 不产嵌套 struct → scan/幂等
+	// 的牙口测不到；嵌套 struct 命名级联漂移曾打翻本闸）
+	writeFile(dir, "g.json", "{\"k\": [1, 2], \"u\": \"http://x/y\", \"cfg\": {\"id\": 1, \"name\": \"n\"}}\n")
 	if rc, _, _, err := runExe(exe, dir, "import", "g.json"); err != nil || rc != 0 {
 		return fmt.Errorf("import rc=%d err=%v", rc, err)
 	}
