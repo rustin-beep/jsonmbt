@@ -64,6 +64,18 @@ jobs:
       - name: L1-b moon test 语义锚
         run: moon test --target native
 
+      # L1-c .json.mbt 静态门禁（2026-10-07 实测定线，勿删）
+      #
+      # 实测结论（本仓 Windows 复现，跨平台同机制）：
+      #   moon build --target native  **不**检查孤立包（注入类型错仍 rc=0）
+      #   moon test --target native  **会**检查（rc=1 [4014]）→ L1-b 已兜底
+      #   moon check（全量）**跳过**孤立包；moon check <包名> 才会点名检查
+      # 所以本步是「显式点名 + 快速失败」：L1-b 的保护是编译副作用，本步把
+      # 「.json.mbt 由 MoonBit 编译器兜底」变成可读的显式契约——目录被删或
+      # 改名时本步在 build-plan 阶段就红，而不是等 L1-b 偶然兜住。
+      - name: L1-c moon check（.json.mbt 静态门禁）
+        run: moon check examples probe/samples
+
       # L2 外层
       - name: 定位 exe 产物（Windows 有 .exe 后缀，Unix 没有）
         id: exe

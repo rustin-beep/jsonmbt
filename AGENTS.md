@@ -18,8 +18,13 @@
 10. **求值分级冻结（L0–L2）**：语言面（.json.mbt 能写什么）变更必须走 PLAN §8 分级评审——**消费者是自家（Vitro）也不跳级**；工具面（build/check/diff 输出形态）可自由加。规范决策点（D-1/D-2）未拍板前不在实现里偷跑。
 11. **生成与检查契约**（从 Vitro 事故直接继承）：`--check` 幂等 = flag 包解析（非手工 os.Args，`-check` 单横线静默改写产物的事故不许重演）、生成流程内置 `moon fmt`、check 无写副作用、产物首行 `///|` + `@generated` 标注、行尾归一后比对。
 12. **探针先行**：新能力/新边界先跑一次性探针拿一手真值（Python/Go 皆可），结论进 PLAN 再实装——importer 探针（label 矩阵/推断原型/大文件性能）是本仓先例。
+13. **`.json.mbt` 要吃到 moon 静态检测，三个前提缺一不可**（2026-10-07 实测定线，Vitro 迁移返工两轮换来）：
+    ① **必须在带 `moon.pkg` 的目录内**——不在 moon workspace/包边界内的文件，moon 工具链**完全看不见**（Vitro 把 `.json.mbt` 放 `scripts/` 下、`moon.mod` 在 `moonbit/`，11 张文件全部处于包外，等于只换载体没买到静态检查）；② **struct 必须 `pub`**——priv 触发逐字段 `unused_field` 噪音，且 `moon info` 不透明；③ **经 `moon fmt` 归一**——fmt 会补 `///|` 文档标记，并按行宽决定 record 折行（短 record 折成单行），import 产物不是 fmt-stable 形态。
+    **实测的 moon 行为基线**：`moon build` **不**检查孤立包类型（注入类型错仍 rc=0）；`moon test` **会**（rc=1 `[4014]`）；`moon check` 全量**跳过**孤立包，`moon check <包名>` 才点名检查。CI 的 L1-b + L1-c 覆盖此防线。
+    **导入 ≠ 合格**：importer 反推的 struct 名是机械派生的（`Id`/`Id2`/`Print_int`），零信息量，损害「人写形态」核心价值——**人工审阅命名是必需环节，不能跳**。
 
 ## 环境注意
 
 - 探针/生成物临时件放 `notes/` 或 `tmp/`，不进主包编译面（根目录 .mbt 同包全编译）。
 - 样本锚三层：JSON 输入 → 期望 `.json.mbt` → 期望降级产物——改一处连跑全部。
+- **`examples/` 与 `probe/samples/` 是 moon 包**（各有 `moon.pkg`）——里面的 `.json.mbt` 由此进入 moon 编译面受静态检查保护；**新增 `.json.mbt` 样本默认放这两个目录**，别另起无 `moon.pkg` 的目录（那就白写了）。

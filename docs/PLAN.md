@@ -213,6 +213,13 @@
 - 竞品与先例：§2 矩阵
 - **AST 依赖面探针（2026-10-07，R1b 定价依据）**：接触面 = **2 函数 + 10 类型**、**38 处引用**落 6 文件（l0 19 / document 8 / tyenv 6 / diag 2 / unescape 2 / cmd 1）；`constant_shape` 对 `Constant` 13 变体**穷尽列举无 `_`**（上游加字面量变体 = 编译红）；跨版本 `0.3.18→0.4.3` 全接口 diff 96 行（`Expr` 删 `LexMatch`、`LexScan` 加 `streaming~`、`ForEach` 的 `binders~` 改名 `patterns~`），而**本仓触及面破坏性变更 0 次**（7 类型零变化 + 3 类型仅加字段被 `..` 吸收）。`moon work` 本地覆盖**实测生效**（consumer 要 `parser@0.4.3`、工作区成员给本地 `9.9.9` → 仅告警 + 测试通过）
 - **moon 文件种类面探针（2026-10-07，后缀继承）**：moon 按**最后一段扩展名**分派工具链——`data.json.mbt` check/fmt/info 全生效；`doc.json.mbt.md` 的 **fence 被 `moon check` 校验 + `moon test` 执行 + `moon fmt` 归一**，且 fence 编译在**黑盒测试上下文**（与包内同名 `pub let` 不冲突、声明不进 `pkg.generated.mbti`）；`moon run script.json.mbtx` 可跑；**手写 `x.json.mbti` 被静默忽略**；`moon info` 对 `.json.mbt` 包产出 `pub struct` 带字段、priv struct 只有不透明 `type X`。**否决**：`.json.mbti` 源格式 / `.json.mbty` / `moon.pkg` pre-build（语义错配——产物须入仓、可 diff、原子写）
+- **moon 静态检测接入探针（2026-10-07，批 C；Vitro 迁移返工两轮换来）**：
+  - **动机**：`.json.mbt` 的核心卖点是白嫖 MoonBit 静态检查，但 Vitro 批②把 11 张放 `scripts/` 下（`moon.mod` 在 `moonbit/`、该处无 `moon.pkg`）→ **完全在包外，moon 一次都没参与**。工具有效但用不上 = 只换载体没买到东西。
+  - **能力实测（包内）**：类型错（`Int` 赋字符串）→ `[4014]`；字段名错 → `[4044]`/`[4091]`；struct 字段缺失 → `[4044]`。**`.json` 写错照样能 `go run` 通过，这就是增量**。
+  - **moon 行为基线（关键，勿再踩）**：`moon build --target native` **不**检查孤立包（注入类型错仍 rc=0）；`moon test --target native` **会**（rc=1）；`moon check` 全量**跳过**孤立包（只 2 tasks），`moon check <包名>` 才点名（rc=127）。→ **CI 的 `moon test` 天然兜底**，另加显式 L1-c 把契约写进 yml。
+  - **接入三前提**：① 目录带 `moon.pkg`（`examples/` 与 `probe/samples/` 已加，样本默认放这两处）；② `struct` 必须 `pub`（priv 触发逐字段 `unused_field` 噪音 + `moon info` 不透明）；③ 经 `moon fmt` 归一（补 `///|` 标记；**按行宽决定折行**——短 record 折成单行，长的保持多行，故 import 产物非 fmt-stable）。
+  - **工具链坑**：`moon fmt` 会把 0 字节 `moon.pkg` 改写成 1 字节换行（幂等，不破坏包识别）；但 `{}` 与块式 `import ()` 两种写法均报 `Failed to calculate build plan`——**只能用空块**（印证陷阱 #42 的块式要求）。
+  - **红牙验收**（CI 原文命令）：类型错 → L1-b rc=1 `[4014]` / L1-c rc=127；字段名错 → rc=1/127 `[4044]`；恢复后 L1-a/b/c 全绿 + 层 2 Go 驱动 `total=5 failed=0` 未受影响。
 
 ## 10. 边界声明
 

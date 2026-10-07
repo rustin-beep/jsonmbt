@@ -80,6 +80,31 @@ jsonmbt: error [J3004] examples/server.json.mbt:9:9 expects Int, got String lite
 
 `jsonmbt import x.json` 将从 JSON 反推 `struct` 头 + 直译值，生成合法 `.json.mbt`——存量 JSON 资产的迁移入口。P0 探针已用合成矩阵与真实数据完成实证（含 2,469 张冻结档案压测，未判形态全部落在已知逃生门内，详见 [PLAN §9](docs/PLAN.md)）。
 
+## 在 Vitro CI 中的使用（实验性）
+
+[Vitro](https://github.com/rustin-beep/vitro) 正在把规则/配置类 JSON 翻转为 `.json.mbt`
+唯一真相源（真相源在仓、`.json` 由 CI 再生供下游生成器消费），jsonmbt 是那条再生链的
+执行器。落地清单与验证证据见 Vitro 仓
+`docs/current/07-质量与裁定/20261007_jsonmbt真相源迁移.md`。
+
+**exe 获取（推荐：clone 源码自行构建）**：
+
+```bash
+git clone https://github.com/rustin-beep/jsonmbt.git
+cd jsonmbt
+MOON_CC=clang moon build --target native --release
+# 产物：_build/native/release/build/cmd/jsonmbt/jsonmbt.exe
+```
+
+> **为什么是 clone 而不是装包**：jsonmbt 目前**不发布 mooncakes 包**，这是主动选择——
+> 工具捏在自己手里，Vitro 侧又是找问题的试验田，"CI 拉 master 现场构建"换来的是
+> **改动即时可见**（改完 jsonmbt 推上去，Vitro CI 立刻用上）。代价是 CI 每次编译
+> 一次（约 40 秒）；若将来门禁稳定性或版本锁定成为真需求，再补发包路径。
+>
+> **前提：`.json.mbt` 必须放在 moon 包内**（目录带 `moon.pkg`）。只有这样 MoonBit
+> 编译器才会给它做静态检查——类型错、字段名错、字段缺失都在编译期红（实测 `[4014]` /
+> `[4044]`），而 `.json` 写错照样能通过。见 AGENTS.md 纪律 13。
+
 ## 路线图
 
 | 阶段 | 内容 |
@@ -98,7 +123,7 @@ jsonmbt: error [J3004] examples/server.json.mbt:9:9 expects Int, got String lite
 
 ## 工程
 
-- 内层防线：`moon test` 语义锚（当前 56 锚全绿）；外层防线：Go 黑盒驱动已上岗（`go run ./tests/driver`——CLI 进程契约 stderr 逐字节 golden / probe 样本黄金门禁 / 确定性断言 / 幂等闸证红 / exe 新鲜度门禁）——对外承诺的真防线在层 2。
+- 内层防线：`moon test` 语义锚（**当前 69 锚全绿**——计数真值以 `moon test` 运行结果为准，本文只引用）；外层防线：Go 黑盒驱动已上岗（`go run ./tests/driver`——CLI 进程契约 stderr 逐字节 golden / probe 样本黄金门禁 / 确定性断言 / 幂等闸证红 / exe 新鲜度门禁）——对外承诺的真防线在层 2。
 - 诊断体系与正/负样本锚纪律继承自 [Vitro](https://github.com/rustin-beep/vitro)（继承语言，不继承口音）。
 - MoonBit 工具链陷阱快照：[docs/MOONBIT_PITFALLS.md](docs/MOONBIT_PITFALLS.md)。
 
