@@ -34,8 +34,10 @@ fn is_legal_label(name : String) -> Bool {
   }
   let chars = name.to_array()
   let first = chars[0]
-  let first_ok = (first >= 'a' && first <= 'z') || first == '_' || first.to_int() >= 0x80
-  if !(first_ok) {
+  let first_ok = (first >= 'a' && first <= 'z') ||
+    first == '_' ||
+    first.to_int() >= 0x80
+  if !first_ok {
     return false
   }
   for i = 1; i < chars.length(); i = i + 1 {
@@ -45,7 +47,7 @@ fn is_legal_label(name : String) -> Bool {
       (c >= '0' && c <= '9') ||
       c == '_' ||
       c.to_int() >= 0x80
-    if !(ok) {
+    if !ok {
       return false
     }
   }
@@ -419,7 +421,7 @@ fn merge_samples(
   samples : Array[SampleTy],
   label : String,
   allow_empty_arr~ : Bool,
-  at_map~ : Bool = false,
+  at_map? : Bool = false,
 ) -> JType raise Diag {
   let mut acc : JType? = None
   let mut nulls = 0
@@ -453,7 +455,7 @@ fn lub(
   a : JType,
   b : JType,
   in_array~ : Bool,
-  at_map~ : Bool = false,
+  at_map? : Bool = false,
 ) -> JType raise Diag {
   match (a, b) {
     (JTInt, JTInt) => JTInt
@@ -489,17 +491,16 @@ fn hetero_diag(
   ctx : InferCtx,
   in_array : Bool,
   what : String,
-  at_map~ : Bool = false,
+  at_map? : Bool = false,
 ) -> Diag raise Diag {
   raise Diag(
-    code=
-      if in_array {
-        JHeteroArr
-      } else if at_map {
-        JMixedKeys // 异值键：Map 逃生门不适用（PLAN §6 键名逃生门适用面写死）
-      } else {
-        JHeteroField
-      },
+    code=if in_array {
+      JHeteroArr
+    } else if at_map {
+      JMixedKeys // 异值键：Map 逃生门不适用（PLAN §6 键名逃生门适用面写死）
+    } else {
+      JHeteroField
+    },
     loc=dummy_loc(),
     message="incompatible types across samples: \{what}",
     help=Some("split the data, or hand-write a struct with a precise type"),

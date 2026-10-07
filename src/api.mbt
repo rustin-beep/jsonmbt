@@ -57,7 +57,10 @@ pub fn sanitize_stem(name : String) -> String {
   let buf = StringBuilder()
   for ch in name {
     let c = ch.to_int()
-    if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || c >= 0x80 {
+    if (ch >= 'a' && ch <= 'z') ||
+      (ch >= '0' && ch <= '9') ||
+      ch == '_' ||
+      c >= 0x80 {
       buf.write_char(ch)
     } else if ch >= 'A' && ch <= 'Z' {
       buf.write_char(Char::from_int(c + 32))
@@ -67,7 +70,9 @@ pub fn sanitize_stem(name : String) -> String {
   }
   let out = buf.to_string()
   let first = out[0]
-  let legal_head = (first >= 'a' && first <= 'z') || first == '_' || first.to_int() >= 0x80
+  let legal_head = (first >= 'a' && first <= 'z') ||
+    first == '_' ||
+    first.to_int() >= 0x80
   if legal_head {
     out
   } else {
@@ -90,13 +95,11 @@ pub fn import_source(
   let stem = sanitize_stem(stem)
   let stripped = strip_jsonc(json_text)
   let root = json_parse(stripped, fname=path)
-  let result = infer_shapes(root, stem=stem, fname=path)
-  let content = generate_source(result, root, stem=stem, src_name=path)
+  let result = infer_shapes(root, stem~, fname=path)
+  let content = generate_source(result, root, stem~, src_name=path)
   // 保险丝（审 P1-1 处方）：产物丢回自家校验器回吃——生成器任何非法输出
   // 在落盘前 fail loud（import 产物承诺 = 合法 .json.mbt，PLAN §1.3）
-  try {
-    check_source(content, path=path + ".mbt", expected_name=stem)
-  } catch {
+  check_source(content, path=path + ".mbt", expected_name=stem) catch {
     e => {
       // 原始诊断透出（自证可诊断：说清产物哪一行非法）
       let detail : String = if e is Diag(..) {
@@ -111,7 +114,7 @@ pub fn import_source(
         help=Some(
           "please report this with the input JSON — the generator must never emit invalid output",
         ),
-        path=path,
+        path~,
       )
     }
   }

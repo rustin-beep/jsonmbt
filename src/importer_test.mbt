@@ -3,8 +3,8 @@
 // 生成格式快照（fmt-canonical——fmt-stable 已由 CLI 冒烟手验，PLAN §9）
 
 ///|
-fn do_import(json : String, stem~ : String = "t") -> String raise @src.Diag {
-  @src.import_source(json, path="t.json", stem=stem).content
+fn do_import(json : String, stem? : String = "t") -> String raise @src.Diag {
+  @src.import_source(json, path="t.json", stem~).content
 }
 
 ///|
@@ -21,7 +21,7 @@ fn expect_import_diag(json : String, code : String) -> Unit {
       }
   }
   let ok = d.contains("[\{code}]")
-  if !(ok) {
+  if !ok {
     println("MISMATCH: expected [\{code}], got:\n\{d}")
     abort("import diagnostic mismatch")
   }
@@ -48,14 +48,13 @@ test "import : 全类型样本生成快照（fmt-canonical 锚）" {
 ///|
 test "import→build 往返 N 等价（P1.5 核心验收锚）" {
   let cases : Array[String] = [
-    "{\"a\":1,\"b\":\"x\",\"c\":[1,2],\"x\":1.5}",
-    "{\"items\":[{\"id\":1,\"on\":true},{\"id\":2,\"on\":false}]}", // 同构数组 → Array[Struct]
-    "{\"h\":{\"a\":1},\"z\":{\"a\":2}}", // 嵌套同形对象
-    "{\"port\":8080,\"meta\":{\"Content-Type\":\"t\"},\"big\":9223372036854775807}",
+    "{\"a\":1,\"b\":\"x\",\"c\":[1,2],\"x\":1.5}", "{\"items\":[{\"id\":1,\"on\":true},{\"id\":2,\"on\":false}]}", // 同构数组 → Array[Struct]
+     "{\"h\":{\"a\":1},\"z\":{\"a\":2}}", // 嵌套同形对象
+     "{\"port\":8080,\"meta\":{\"Content-Type\":\"t\"},\"big\":9223372036854775807}",
     "[1, 2, 3]", // 顶层数组
-    "42", // 顶层标量
-    "{\"deep\":[[{\"x\":1}]]}", // 深嵌套
-    "{\"items\":[{\"v\":null},{\"v\":1}]}", // 多样本 null → Option
+     "42", // 顶层标量
+     "{\"deep\":[[{\"x\":1}]]}", // 深嵌套
+     "{\"items\":[{\"v\":null},{\"v\":1}]}", // 多样本 null → Option
   ]
   for json in cases {
     // null 字段需非 null 样本聚基型——用带样本变体或跳过 null-only 场景
@@ -74,10 +73,7 @@ test "D-9 三形态 : URL/路径字符串内的 // 与 /* 不误伤" {
   // 行注释/块注释经 \n 拼进同一字符串字面量（MoonBit 字符串不跨行）
   let json = "{ \"url\": \"http://x/y\", \"path\": \"a//b\", \"cmt\": \"x/*y*/z\" } // 行注释\n/* 块注释 */"
   let stripped = @src.strip_jsonc(json)
-  inspect(
-    stripped.contains("http://x/y"),
-    content="true",
-  )
+  inspect(stripped.contains("http://x/y"), content="true")
   inspect(stripped.contains("a//b"), content="true")
   inspect(stripped.contains("x/*y*/z"), content="true")
   // 注释区域替换为等长空格（行列不漂移）且能通过解析
@@ -109,9 +105,7 @@ test "J4001 : 孤立空数组阻断（两级启发后无线索）" {
 
 ///|
 test "D-1 : 空数组同形复用启发（组内非空样本 → 复用元素类型）" {
-  let out = do_import(
-    "{\"items\":[{\"v\":1}],\"more\":[{\"v\":2},{\"v\":3}]}",
-  )
+  let out = do_import("{\"items\":[{\"v\":1}],\"more\":[{\"v\":2},{\"v\":3}]}")
   // 同形（键集 {v}）→ 同 struct：空数组场景由异构键触发……本例两组同签名合并；
   // 真正的启发锚在下一个测试（同名字段跨组）
   inspect(out.contains("Array["), content="true")
@@ -119,9 +113,7 @@ test "D-1 : 空数组同形复用启发（组内非空样本 → 复用元素类
 
 ///|
 test "D-1 : 空数组二级启发（同名字段他处非空 → 复用）" {
-  let out = do_import(
-    "{\"a\":{\"xs\":[1,2]},\"b\":{\"ys\":\"k\",\"xs\":[]}}",
-  )
+  let out = do_import("{\"a\":{\"xs\":[1,2]},\"b\":{\"ys\":\"k\",\"xs\":[]}}")
   // b.xs 空数组：b 组内无样本；全文件同名字段 a.xs 非空 Array[Int] → 复用
   inspect(out.contains("xs : Array[Int]"), content="true")
 }
@@ -159,16 +151,13 @@ test "J4020 : 超 Int64 诚实拒绝（D-2）" {
 ///|
 test "J4020 : Int64 与 Double 混合拒绝（静默 Double 化 = 精度红线）" {
   expect_import_diag(
-    "{\"items\":[{\"v\":9223372036854775807},{\"v\":1.5}]}",
-    "J4020",
+    "{\"items\":[{\"v\":9223372036854775807},{\"v\":1.5}]}", "J4020",
   )
 }
 
 ///|
 test "D-2 : 跨样本无损上浮（同字段任一样本超 Int → 全体 Int64）" {
-  let out = do_import(
-    "{\"items\":[{\"v\":1},{\"v\":9223372036854775807}]}",
-  )
+  let out = do_import("{\"items\":[{\"v\":1},{\"v\":9223372036854775807}]}")
   inspect(out.contains("v : Int64"), content="true")
 }
 
@@ -186,9 +175,7 @@ test "J4030 : tagged-enum 形态 hint（rc 0 不阻断）" {
 
 ///|
 test "null 字段多样本聚基型 → Option[T]" {
-  let out = do_import(
-    "{\"items\":[{\"v\":null},{\"v\":1}]}",
-  )
+  let out = do_import("{\"items\":[{\"v\":null},{\"v\":1}]}")
   inspect(out.contains("v : Int?"), content="true")
 }
 
@@ -207,7 +194,8 @@ test "Option 渲染 : null → None、值 → Some" {
 
 ///|
 test "P1-1 防回归 : 指数源文本三形态生成合法字面量（1e2/1E6/-1e3 补小数点）" {
-  for case in [
+  for
+    case in [
       ("{\"d\":1e2}", "1.0e2"),
       ("{\"d\":1E6}", "1.0E6"),
       ("{\"d\":-1e3}", "-1.0e3"),
@@ -222,9 +210,7 @@ test "P1-1 防回归 : 指数源文本三形态生成合法字面量（1e2/1E6/-
 
 ///|
 test "P1-2 防回归 : 控制字符生成合法 U+XXXX 形态转义（三段写，无坏插值）" {
-  let out = do_import(
-    "{\"s\":\"a\\u0001b\\u0000c\\u001fd\"}",
-  )
+  let out = do_import("{\"s\":\"a\\u0001b\\u0000c\\u001fd\"}")
   inspect(out.contains("a\\u{1}b\\u{0}c\\u{31}d"), content="true")
   let _ = @src.build_source(out, path="t.json.mbt", expected_name="t") // 回吃合法
 }
@@ -279,7 +265,9 @@ test "Vitro catalog 防回归 : 星面字符（emoji 代理对）不越界 panic
 test "Vitro rules 防回归 : 带点键（\"memory.dump\"）只验首字符的漏网 → Map 逃生门" {
   // is_legal_label 曾只验首字符——"memory.dump" 小写开头放行，点直进产物
   // 产 J1001（审 A4 的 label 通道变体）；修后全字符验证 → 整对象转 Map
-  let out = do_import("{\"skip\": { \"capabilities\": \"a\", \"memory.dump\": \"b\" }}")
+  let out = do_import(
+    "{\"skip\": { \"capabilities\": \"a\", \"memory.dump\": \"b\" }}",
+  )
   inspect(out.contains("{ \"capabilities\""), content="true")
   inspect(out.contains("\"memory.dump\""), content="true")
   let _ = @src.build_source(out, path="t.json.mbt", expected_name="t") // 回吃合法
@@ -289,7 +277,11 @@ test "Vitro rules 防回归 : 带点键（\"memory.dump\"）只验首字符的�
 test "化石批量防回归 : 带点 stem 清洗（array_address.c → 合法 binding）" {
   let out = do_import("{\"v\": 1}", stem="array_address.c")
   inspect(out.contains("pub let array_address_c"), content="true")
-  let _ = @src.build_source(out, path="t.json.mbt", expected_name="array_address_c")
+  let _ = @src.build_source(
+    out,
+    path="t.json.mbt",
+    expected_name="array_address_c",
+  )
 }
 
 ///|

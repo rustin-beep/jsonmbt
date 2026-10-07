@@ -240,7 +240,6 @@ test "P2-6② : Some(v) 内层期望类型校验判别（Int? 字段给 Some(\"x
     #|  opt: Some("x"),
     #|}
   expect_diag(
-    src,
-    "jsonmbt: error [J3004] t.json.mbt:6:13 expects Int, got String literal\n  help: change the field type to String, or remove the quotes",
+    src, "jsonmbt: error [J3004] t.json.mbt:6:13 expects Int, got String literal\n  help: change the field type to String, or remove the quotes",
   )
 }

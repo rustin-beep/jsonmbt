@@ -15,8 +15,8 @@ fn write_stderr(s : String) -> Unit {
 ///|
 /// J 码诊断单源出口（审 P3：CLI 15 处手写 [Jxxxx] 前缀 → 统一走 Diag 构造，
 /// 码值与渲染只此一家）
-fn jdiag_exit(code : @src.JCode, msg : String, help~ : String? = None) -> Int {
-  let d = @src.Diag(code=code, loc=dummy_loc(), message=msg, help=help, path="")
+fn jdiag_exit(code : @src.JCode, msg : String, help? : String? = None) -> Int {
+  let d = @src.Diag(code~, loc=dummy_loc(), message=msg, help~, path="")
   write_stderr(d.render())
   @src.JCode::exit_code(code)
 }
@@ -82,26 +82,22 @@ fn run_import(path : String, out_opt : String?, check : Bool) -> Int {
       Some(o) =>
         match json_stem_of(o) {
           Some(s) => s
-          None => {
+          None =>
             return jdiag_exit(
               @src.JUsage,
               "-o needs a file name to derive the stem from",
             )
-          }
         }
-      None => {
+      None =>
         return jdiag_exit(
           @src.JUsage,
           "importing stdin requires -o <out.json.mbt>",
         )
-      }
     }
   } else {
     match json_stem_of(path) {
       Some(s) => s
-      None => {
-        return jdiag_exit(@src.JUsage, "'\{path}' has no usable stem")
-      }
+      None => return jdiag_exit(@src.JUsage, "'\{path}' has no usable stem")
     }
   }
   let outcome = @src.import_source(src, path=display, stem~) catch {
@@ -288,9 +284,9 @@ fn main_rc() -> Int {
       }
     } else if verb != "import" && stem_of(p) is None {
       return jdiag_exit(
-          @src.JUsage,
-          "'\{p}' is not a .json.mbt file (use `-` for stdin)",
-        )
+        @src.JUsage,
+        "'\{p}' is not a .json.mbt file (use `-` for stdin)",
+      )
     }
   }
   if verb == "import" {
