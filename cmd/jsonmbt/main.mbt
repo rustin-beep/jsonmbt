@@ -254,6 +254,7 @@ fn main_rc() -> Int {
   let paths : Array[String] = []
   let mut out_opt : String? = None
   let mut do_check = false
+  let mut do_pretty = false
   let mut i = 2
   while i < args.length() {
     let a = args[i]
@@ -265,6 +266,9 @@ fn main_rc() -> Int {
       i = i + 2
     } else if a == "--check" {
       do_check = true
+      i = i + 1
+    } else if a == "--pretty" {
+      do_pretty = true
       i = i + 1
     } else if a == "-h" || a == "--help" {
       return usage()
@@ -300,7 +304,7 @@ fn main_rc() -> Int {
   }
   let mut rc = 0
   for p in paths {
-    let r = run_one(verb, p, out_opt)
+    let r = run_one(verb, p, out_opt, do_pretty)
     if r != 0 {
       rc = r
     }
@@ -309,7 +313,12 @@ fn main_rc() -> Int {
 }
 
 ///|
-fn run_one(verb : String, path : String, out_opt : String?) -> Int {
+fn run_one(
+  verb : String,
+  path : String,
+  out_opt : String?,
+  pretty : Bool,
+) -> Int {
   let src = read_input(path) catch {
     e =>
       if e is Diag(..) {
@@ -332,8 +341,8 @@ fn run_one(verb : String, path : String, out_opt : String?) -> Int {
     }
     return 0
   }
-  // build：校验先行，失败零产物（D-8 ①）
-  let product = @src.build_source(src, path=display, expected_name?) catch {
+  // build：校验先行，失败零产物（D-8 ①）；--pretty 与 Go encoder 逐字节对齐
+  let product = @src.build_source(src, path=display, expected_name?, pretty=pretty) catch {
     e =>
       if e is Diag(..) {
         return print_diag_exit(e)

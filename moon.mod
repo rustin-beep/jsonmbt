@@ -8,7 +8,19 @@ repository = "https://github.com/rustin-beep/jsonmbt"
 
 license = "MIT"
 
-keywords = [ "json", "config", "typed", "moonbit" ]
+// 与 GitHub 仓库 topics 逐字一致（元信息单点归一，改一处须改另一处）
+keywords = [
+  "json",
+  "config",
+  "configuration",
+  "schema",
+  "typed",
+  "codegen",
+  "data-format",
+  "deterministic",
+  "serialization",
+  "moonbit",
+]
 
 description = "typed JSON source files for MoonBit (.json.mbt) — moon-checked, fmt-stable, degrade-to-JSON"
 

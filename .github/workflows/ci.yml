@@ -1,0 +1,73 @@
+# jsonmbt 门禁 —— 双层防线（AGENTS.md 纪律 7）
+#
+#   L1 内层：moon test 语义锚 —— 随工具链漂移，漂移即编译红，fail loud 可接受
+#   L2 外层：Go 黑盒驱动 —— 只依赖 exe 产物，独立于 moon 工具链
+#   对外承诺的真防线在 L2：L1 红了先查工具链漂移，L2 红了才是产品真缺陷。
+#
+# 矩阵不含 Windows：native 后端撞 moon#2254（MSVC optimization cliff），
+# 本项目一律 MOON_CC=clang，见 docs/MOONBIT_PITFALLS.md。
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MOON_CC: clang
+
+jobs:
+  gate:
+    name: gate / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MoonBit
+        uses: hustcer/setup-moonbit@v1
+        with:
+          version: latest
+
+      - name: Setup Go（层 2 驱动）
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Toolchain 指纹
+        run: |
+          moon version --all
+          clang --version
+          go version
+
+      # L1 内层
+      - name: L1-a build（native，clang）
+        run: moon build --target native
+
+      - name: L1-b moon test 语义锚
+        run: moon test --target native
+
+      # L2 外层
+      - name: 定位 exe 产物（Windows 有 .exe 后缀，Unix 没有）
+        id: exe
+        shell: bash
+        run: |
+          set -euo pipefail
+          p="_build/native/debug/build/cmd/jsonmbt/jsonmbt"
+          [ -f "$p.exe" ] && p="$p.exe"
+          test -f "$p"
+          echo "path=$p" >> "$GITHUB_OUTPUT"
+
+      - name: L2 Go 黑盒驱动（rc / stdout / stderr 逐字节 golden）
+        run: go run ./tests/driver -exe "${{ steps.exe.outputs.path }}"

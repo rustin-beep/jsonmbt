@@ -1,0 +1,66 @@
+name: 缺陷报告 / Bug report
+description: 行为与预期不符（含逐字节差异、退出码、诊断编号）
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        jsonmbt 的对拍标准是 **RFC 8259 + moon 实测行为**（本仓无 oracle）。
+        报缺陷时请给出**可复现的最小 `.json.mbt` 样本**——样本锚是三层联动的
+        （JSON 输入 → 期望 `.json.mbt` → 期望降级产物），缺一层就定位不了。
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 最小复现样本
+      description: 能触发问题的最短 `.json.mbt`（不要贴整个业务文件）
+      render: jsonmbt
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: 执行命令
+      placeholder: jsonmbt build examples/server.json.mbt
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望
+      description: 期望的退出码 / stdout / stderr / 产物内容
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际
+      description: 实际的退出码 / stdout / stderr / 产物内容（逐字节，不要概括）
+    validations:
+      required: true
+
+  - type: select
+    id: layer
+    attributes:
+      label: 命中哪一层
+      options:
+        - L2 外层 —— CLI 进程契约 / Go 黑盒驱动（真缺陷的判定层）
+        - L1 内层 —— moon test 语义锚（可能是工具链漂移）
+        - 不确定 / 两层都红
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境指纹
+      description: "`moon version --all` 与 jsonmbt commit / 版本号"
+      placeholder: |
+        moon 0.1.20260920 (914d7da 2026-09-20)
+        moonc v0.10.14+7d59c7ec9
+        jsonmbt: <commit sha 或版本号>
+    validations:
+      required: true

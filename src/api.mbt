@@ -14,14 +14,21 @@ pub fn check_source(
 }
 
 ///|
-/// 降级：.json.mbt 源 → 紧凑 JSON 文本（确定性投影；类型名剥除、字面量直译）
+/// 降级：.json.mbt 源 → JSON 文本（默认紧凑；pretty 形态与 Go
+/// json.Encoder SetIndent("", "  ") 逐字节一致含尾换行——真相源翻转场景
+/// 下游按字节指纹（sha）锚定时必须逐字节对齐，Vitro 门禁实锤）
 pub fn build_source(
   src : String,
   path? : String = "",
   expected_name? : String,
+  pretty? : Bool = false,
 ) -> String raise Diag {
   let doc = analyze(src, path~, expected_name?)
-  build_value_of(doc).stringify()
+  if pretty {
+    build_value_of(doc).stringify(indent=2) + "\n"
+  } else {
+    build_value_of(doc).stringify()
+  }
 }
 
 ///|

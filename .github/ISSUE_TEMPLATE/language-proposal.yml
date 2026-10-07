@@ -1,0 +1,59 @@
+name: 语言面提案 / Language proposal
+description: 想在 .json.mbt 里写新东西（求值分级 L0–L2，走 PLAN §8 分级评审）
+labels: ["language", "enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `.json.mbt` 的语言面受**求值分级冻结**约束：语言面变更必须走 PLAN §8 分级评审，
+        消费者是自家项目也不跳级。工具面（`build` / `check` 输出形态）无需走本模板，直接提 PR。
+        当前：L0 纯字面量已实装；L1 常量算术、L2 let 引用为 P3 规划；
+        函数 / 条件 / 跨文件引用 / 副作用**永久禁用**。
+
+  - type: textarea
+    id: syntax
+    attributes:
+      label: 想写进来的写法
+      description: 给出具体的 `.json.mbt` 片段
+      render: jsonmbt
+    validations:
+      required: true
+
+  - type: select
+    id: level
+    attributes:
+      label: 落在哪一级
+      options:
+        - L0 —— 纯字面量（结构 + 值，零计算）
+        - L1 —— 常量算术（`port: 4000 + 43`）
+        - L2 —— let 引用（文件内 `let base = 443` → `port: base`）
+        - 疑似越界（函数 / 条件 / 跨文件引用 / 副作用）
+        - 不确定，需评审判定
+    validations:
+      required: true
+
+  - type: textarea
+    id: degrade
+    attributes:
+      label: 降级产物是否仍确定
+      description: |
+        确定性是硬约束：同一输入必须逐字节同输出，diff 噪音归零。
+        说明降级器如何在**不执行任意计算**的前提下得到结果；做不到就说明理由。
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: 动机与替代方案
+      description: 解决什么真实问题？为什么不能用「JSON 侧直接写死」或「importer 生成时展开」解决？
+    validations:
+      required: true
+
+  - type: textarea
+    id: probe
+    attributes:
+      label: 探针证据（可选）
+      description: |
+        本项目纪律是**探针先行**：新能力先跑一次性探针拿一手真值再进 PLAN。
+        有探针结论的请贴上（Python / Go 脚本或直接贴输出）。
