@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+### Added（pages 体验：加载等待提示 + README 直入标签）
+
+- `pages/index.html`：引擎改**动态 `import()`**——静态 import 会把整个交互脚本卡在 ffi.js（~7.8MB）下载期（输入框可见但零反馈）；现先绑 UI 并显示「⏳ 引擎加载中」状态（新 `#status.loading` 样式），就绪后自动跑初始转换，失败显式报错（网络/GitHub Pages 分发问题可诊断）；下载期间的手动转换提示「将在就绪后自动执行」
+- README 顶部（banner 下）加**在线试玩直入标签**：<https://rustin-beep.github.io/jsonmbt/>
+- 验证：页面 module 脚本 `node --check` 语法过；动态导入链 node 实跑（import→build 往返）绿；smoke 22 断言复跑绿
+
+### Added（issue #6-5：`jsonmbt migrate` 批量迁移侦察三榜报告）
+
+- `jsonmbt migrate [dir] [--write]`——把「探测哪些能迁」从下游仓手写 shell 脚本产品化：逐张 import → build（pretty+compact）→ 与原文件比对三榜：**BYTE-EQ**（行尾归一逐字节相等，可直进 CI 对账）/ **VALUE-EQ**（值语义等价键序不敏感——新 `@src.json_value_eq` 树比；风格差，接 CI 前须确认字节口径，报告尾 hint）/ **REJECT**（J 码 + 消息首行）；DIFF 兜底榜（往返值不等理论不可达——出现即缺陷信号）
+- **默认零写**（侦察契约）；`--write` 落盘非 reject 产物；rc：任一 reject/diff → 1（迁移完成度闸）
+- **内存 taken 累积**模拟「逐张真实迁移」的同目录撞名序列（#4 前缀化复现）；前缀名出现时 note 行指路 `--type-name-map`
+- 已有同名 `.json.mbt` 孪生的文件跳过（已迁移不重复报）；JSONC 原文件因注释恒落 VALUE-EQ（如设计）
+- 层 2 +1 用例（三榜分类/零写/--write/rc/空目录），22/22 绿
+
+### Added（issue #6-4：`--type-name-map` + Map 值宿主派生命名）
+
+- `import --type-name-map <map.json>`：机器派生名（Id/File2/Print_int 等零信息量形态）→ 语义名映射；**键 = 最终派生名**（用户从首次 import 产物复制——含 #4 跨文件前缀化形态如 ItemsId）；值校验 fail loud（非法类型名/撞已占类型 → **J1010** 新码；映射文件坏 JSON → J1002、形态非对象/值非串 → J1010）；未命中键 → hint 不阻断（typo 核对提示）；build/check 误用该 flag → JUsage
+- **Map 值类型命名改宿主字段派生**（issue 评论拍板）：`cases : Map[String, Src_sha]`（首键派生，值实为完整条目——误导）→ `Map[String, CasesEntry]`（Map 持有者名字为语义锚）；数组位/顶层无宿主 → fallback 首键派生；首见定型，确定性保持
+- `ImportOutcome` 增 `unmatched` 出口（层 1 锚）；层 2 +1 用例（映射全链/J1010×2/hint/宿主派生），21/21 绿
+
 ### Added（pages CI 接线：GitHub Pages 自动部署）
 
 - `.github/workflows/pages.yml`：push master / PR / 手动触发——js 引擎构建（debug，release tree-shake 坑已登记）→ **22 断言 smoke 作部署门**（断言红不上线）→ index.html + ffi.js 上传 → `deploy-pages` 发布；PR 只验不部署

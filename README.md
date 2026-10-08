@@ -2,6 +2,12 @@
   <img src="assets/banner.svg" alt="jsonmbt — typed JSON source files for MoonBit" width="640">
 </div>
 
+<div align="center">
+
+**[🌐 在线试玩 playground →](https://rustin-beep.github.io/jsonmbt/)** — JSON ↔ `.json.mbt` 双向实时转换（CI 自动构建部署，引擎 = 本仓真实代码）
+
+</div>
+
 # jsonmbt
 
 **`.json.mbt` 是 JSON 的类型化源码形态**——以 MoonBit 子集书写的 JSON 数据：`struct` 头即 schema，值体即数据，经 jsonmbt 引擎**确定性降级**输出干净、紧凑的 `.json`。

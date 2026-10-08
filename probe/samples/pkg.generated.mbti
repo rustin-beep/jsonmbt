@@ -2,6 +2,8 @@
 package "vitro/jsonmbt/probe/samples"
 
 // Values
+pub let reserved_keys : Reserved_keys
+
 pub let server : Server
 
 pub let vitals : Vitals
@@ -9,9 +11,20 @@ pub let vitals : Vitals
 // Errors
 
 // Types and methods
+pub struct Id {
+  id : String
+  where_ : String
+  targets : Array[String]
+}
+
 pub struct Inner {
   x : Int
   ratio : Double
+}
+
+pub struct Reserved_keys {
+  classes : Array[String]
+  rules : Array[Id]
 }
 
 pub struct Server {
