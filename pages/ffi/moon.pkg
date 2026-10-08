@@ -1,0 +1,21 @@
+// pages/ffi：浏览器 demo 的 js 出口 wrapper（探针先行产物，P2 npm 包预演）
+// 官方 FFI 文档：wasm-gc 的 String→externref 依赖 js-string-builtins 提案，
+// 当前 moon（0.1.20260920）link 配置无此开关（二进制无该键、import 段空实测）
+// → demo 走 js 后端（String=JS string 直通）；release 会 tree-shake link.exports
+// → demo 用 debug 构建 + main 保活引用（坑已登记，P2 npm 包须解）
+import {
+  "vitro/jsonmbt/src",
+  "moonbitlang/core/json",
+}
+
+supported_targets = "js"
+
+pkgtype(kind: "executable")
+
+options(
+  "link": {
+    "js": {
+      "exports": [ "js_import", "js_build", "js_check" ]
+    }
+  }
+)

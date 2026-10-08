@@ -2,6 +2,8 @@ target/
 _build/
 *.core
 .mooncakes/
+# pages playground 的引擎构建产物（debug 形态 ~7.7MB；构建命令见 pages/index.html 页脚）
+pages/ffi.js
 
 #agent
 /.workbuddy/

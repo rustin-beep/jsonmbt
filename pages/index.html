@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>jsonmbt playground — .json.mbt 实时转换 demo</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f26; --panel2: #22262f;
+    --text: #d8dce4; --dim: #8a93a3; --accent: #5fd4a0;
+    --red: #e06c75; --yellow: #e5c07b; --line: #2e3440;
+    --mono: ui-monospace, "Cascadia Code", Consolas, "Courier New", monospace;
+    /* token 色 */
+    --t-key: #6cb6ff; --t-str: #98c379; --t-num: #d19a66; --t-bool: #d19a66;
+    --t-com: #7a828e; --t-kw: #e5c07b; --t-ty: #56b6c2;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; }
+  header { padding: 14px 20px 10px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 18px; }
+  header h1 code { color: var(--accent); }
+  header p { margin: 4px 0 0; color: var(--dim); font-size: 13px; }
+  .stembar { display: flex; gap: 10px; align-items: center; padding: 8px 20px; font-size: 13px; color: var(--dim); }
+  .stembar input { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 3px 8px; font-family: var(--mono); width: 90px; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 0 20px; }
+  .pane { display: flex; flex-direction: column; }
+  .pane h2 { font-size: 13px; margin: 0 0 6px; color: var(--dim); font-weight: 600; }
+  .pane h2 b { color: var(--text); }
+  .editor { position: relative; height: 42vh; }
+  .editor pre, .editor textarea {
+    margin: 0; width: 100%; height: 100%;
+    font-family: var(--mono); font-size: 13px; line-height: 1.5;
+    padding: 10px; border: 1px solid var(--line); border-radius: 6px;
+    white-space: pre; overflow: auto; tab-size: 2;
+  }
+  .editor pre {
+    position: absolute; inset: 0; pointer-events: none;
+    background: var(--panel); color: var(--text);
+    overflow: hidden;
+  }
+  .editor textarea {
+    position: relative; background: transparent; color: transparent;
+    caret-color: #fff; resize: none;
+  }
+  .editor textarea::selection { background: rgba(255,255,255,.18); }
+  .editor textarea:focus { outline: 1px solid var(--accent); }
+  .editor textarea.err { outline: 1px solid var(--red); }
+  .k { color: var(--t-key); } .s { color: var(--t-str); } .n { color: var(--t-num); }
+  .b { color: var(--t-bool); } .c { color: var(--t-com); font-style: italic; }
+  .kw { color: var(--t-kw); } .ty { color: var(--t-ty); }
+  #status { margin: 10px 20px 0; padding: 8px 12px; border-radius: 6px; font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; display: none; }
+  #status.ok { display: block; background: #16241d; color: var(--accent); border: 1px solid #274436; }
+  #status.bad { display: block; background: #2a1a1d; color: var(--red); border: 1px solid #52333a; }
+  #status.hint { display: block; background: #2a251a; color: var(--yellow); border: 1px solid #524733; }
+  section.samples { padding: 18px 20px 30px; }
+  section.samples h2 { font-size: 15px; margin: 0 0 4px; }
+  section.samples .sub { color: var(--dim); font-size: 12.5px; margin: 0 0 12px; }
+  .groups { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .group.wide { grid-column: 1 / -1; }
+  .group h3 { font-size: 13px; margin: 0 0 8px; }
+  .group.eat h3 { color: var(--accent); }
+  .group.reject h3 { color: var(--red); }
+  .group.mbt h3 { color: var(--t-ty); }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .group.mbt .cards { grid-template-columns: repeat(4, 1fr); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 8px 10px; cursor: pointer; transition: border-color .15s;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card .t { font-size: 12.5px; font-weight: 600; }
+  .card .d { font-size: 11.5px; color: var(--dim); margin-top: 2px; line-height: 1.4; }
+  footer { padding: 10px 20px 26px; color: var(--dim); font-size: 12px; line-height: 1.6; border-top: 1px solid var(--line); }
+  footer code { color: var(--text); }
+  @media (max-width: 900px) { .split, .groups { grid-template-columns: 1fr; } .group.mbt .cards { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>jsonmbt playground — <code>.json.mbt</code> 实时转换 demo</h1>
+  <p>.json.mbt = JSON 的类型化源码形态（MoonBit 子集写数据，确定性降级回 JSON）。<b>类型即 Schema</b>：字段拼错、类型不配编译期红。引擎 = src 包 js 出口（本仓实测构建，非复刻）。</p>
+</header>
+
+<div class="stembar">
+  <label>绑定名 stem：<input id="stem" value="demo" spellcheck="false"></label>
+  <span>左栏编辑 → 自动迁移到右栏；右栏编辑 → 自动降级回左栏（debounce 400ms）</span>
+</div>
+
+<div class="split">
+  <div class="pane">
+    <h2><b>JSON / JSONC 输入</b>（importer 摄取：形状推断）</h2>
+    <div class="editor"><pre class="hl" id="hlLeft" aria-hidden="true"></pre><textarea id="left" spellcheck="false"></textarea></div>
+  </div>
+  <div class="pane">
+    <h2><b>.json.mbt 类型化源码</b>（可写 enum / String? / 注释 / #| 多行）</h2>
+    <div class="editor"><pre class="hl" id="hlRight" aria-hidden="true"></pre><textarea id="right" spellcheck="false"></textarea></div>
+  </div>
+</div>
+<div id="status"></div>
+
+<section class="samples">
+  <h2>能吃下什么样的 JSON？</h2>
+  <p class="sub">点卡片载入对应栏，看<b>真实引擎</b>的输出或报错——不是文案演示，每个报错都是活的 J 码诊断。</p>
+  <div class="groups">
+    <div class="group eat">
+      <h3>✅ 能吃（迁移成功，载入左栏）</h3>
+      <div class="cards" id="eatCards"></div>
+    </div>
+    <div class="group reject">
+      <h3>❌ 诚实拒绝（fail loud，不静默猜）</h3>
+      <div class="cards" id="rejectCards"></div>
+    </div>
+    <div class="group mbt wide">
+      <h3>⚡ .json.mbt 独有表达（载入右栏，降级回 JSON）</h3>
+      <div class="cards" id="mbtCards"></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  确定性：同输入永同输出（两次 build 逐字节 diff 为零，层 2 门禁锚定）。往返：JSON → .json.mbt → JSON 值语义等价（N 等价锚）。
+  <br>标注细节：超 Int 范围整数上浮 <code>Int64</code>（repr 保真，JS number 会丢精度而这里不会）；<code>1e10</code> 降级规范化为 <code>1.0e10</code>（N 层 1≡1.0 值等价）；Option 写法 = MoonBit 后缀糖 <code>String?</code>。
+  <br>demo 引擎 = MoonBit src 包 js 后端出口（wasm-gc 的 String ABI 依赖 js-string-builtins 提案，当前工具链未支持——已实测登记）。
+  <br>重建引擎产物（ffi.js 不入库）：<code>MOON_CC=clang moon build --target js pages/ffi && cp _build/js/debug/build/pages/ffi/ffi.js pages/</code>（release 会 tree-shake link.exports，用 debug——已登记待解）；冒烟：<code>node pages/smoke.mjs</code>。
+</footer>
+
+<script type="module">
+import { js_import, js_build } from './ffi.js';
+
+const $left = document.getElementById('left');
+const $right = document.getElementById('right');
+const $stem = document.getElementById('stem');
+const $status = document.getElementById('status');
+const $hlLeft = document.getElementById('hlLeft');
+const $hlRight = document.getElementById('hlRight');
+
+// ---------- 语法高亮（overlay：textarea 透明文字叠高亮 pre） ----------
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+function hlJson(src) {
+  return esc(src).replace(
+    /(\/\/[^\n]*)|("(?:[^"\\\n]|\\.)*")(\s*:)|("(?:[^"\\\n]|\\.)*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|\b(true|false|null)\b/g,
+    (m, com, key, colon, str, num, kw) => {
+      if (com) return '<span class="c">' + com + '</span>';
+      if (key) return '<span class="k">' + key + '</span>' + colon;
+      if (str) return '<span class="s">' + str + '</span>';
+      if (num) return '<span class="n">' + num + '</span>';
+      if (kw) return '<span class="b">' + kw + '</span>';
+      return m;
+    });
+}
+
+function hlMbt(src) {
+  return esc(src).replace(
+    /(\/\/[^\n]*)|("(?:[^"\\\n]|\\.)*")|(#\|[^\n]*)|\b(struct|let|pub|mut|enum|import|fn|match|if|else)\b|\b(Option|Array|Map|Int|Int64|Double|Bool|String|Unit|Some|None)\b|\b([A-Z][A-Za-z0-9_]*)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?L?)/g,
+    (m, com, str, ml, kw, ty, ty2, num) => {
+      if (com) return '<span class="c">' + com + '</span>';
+      if (str) return '<span class="s">' + str + '</span>';
+      if (ml) return '<span class="s">' + ml + '</span>';
+      if (kw) return '<span class="kw">' + kw + '</span>';
+      if (ty) return '<span class="ty">' + ty + '</span>';
+      if (ty2) return '<span class="ty">' + ty2 + '</span>';
+      if (num) return '<span class="n">' + num + '</span>';
+      return m;
+    });
+}
+
+function paint(side) {
+  const ta = side === 'left' ? $left : $right;
+  const pre = side === 'left' ? $hlLeft : $hlRight;
+  const hl = side === 'left' ? hlJson : hlMbt;
+  pre.innerHTML = hl(ta.value) + '\n';
+  syncScroll(side);
+}
+function syncScroll(side) {
+  const ta = side === 'left' ? $left : $right;
+  const pre = side === 'left' ? $hlLeft : $hlRight;
+  pre.scrollTop = ta.scrollTop;
+  pre.scrollLeft = ta.scrollLeft;
+}
+
+// ---------- 转换核心 ----------
+function show(kind, text) {
+  $status.className = kind; // ok | bad | hint
+  $status.textContent = text;
+}
+
+let lastSide = 'left';
+let timer = null;
+
+function convert(side) {
+  clearTimeout(timer);
+  timer = setTimeout(() => {
+    lastSide = side;
+    try {
+      if (side === 'left') {
+        const r = JSON.parse(js_import($left.value, $stem.value.trim() || 'demo'));
+        if (r.ok) {
+          $right.value = r.content;
+          $right.classList.remove('err');
+          const hints = (r.hints || []).join('\n');
+          show(hints ? 'hint' : 'ok', hints || '✓ 迁移成功 — ' + ($stem.value.trim() || 'demo') + '.json.mbt（绑定名 = stem，struct 名 = capitalize(stem)）');
+        } else {
+          $right.classList.add('err');
+          show('bad', r.error);
+        }
+      } else {
+        const r = JSON.parse(js_build($right.value));
+        if (r.ok) {
+          $left.value = r.json;
+          $left.classList.remove('err');
+          show('ok', '✓ 降级成功 — 紧凑 JSON（同输入永同输出）');
+        } else {
+          $left.classList.add('err');
+          show('bad', r.error);
+        }
+      }
+    } catch (e) {
+      show('bad', '引擎异常: ' + e.message);
+    }
+    paint('left'); paint('right');
+  }, 400);
+}
+
+$left.addEventListener('input', () => { paint('left'); convert('left'); });
+$right.addEventListener('input', () => { paint('right'); convert('right'); });
+$left.addEventListener('scroll', () => syncScroll('left'));
+$right.addEventListener('scroll', () => syncScroll('right'));
+$stem.addEventListener('change', () => { if (lastSide === 'left') convert('left'); });
+
+// ---------- 样例矩阵（全部过真实引擎冒烟：pages/smoke.mjs） ----------
+const EAT = [
+  ['标量 + 嵌套对象', '基本类型全收，嵌套 → 嵌套 struct', '{"id": 1, "name": "demo", "cfg": {"debug": true, "ratio": 0.5}}'],
+  ['数组 + 嵌套数组', '同构数组 → Array[T]', '{"tags": ["api", "web"], "matrix": [[1, 2], [3, 4]]}'],
+  ['null → Option（数组聚合）', '非 null 样本给线索，null 字段推 T?（单样本全 null 会 J4003）', '{"users": [{"nickname": null, "id": 1}, {"nickname": "x", "id": 2}]}'],
+  ['JSONC 注释剥离', '// 注释剥丢弃明示；尾逗号是 .json.mbt 侧优势（JSON 输入侧不吃尾逗号）', '{\n  // 用户配置\n  "port": 8080,\n  "hosts": ["a", "b"]\n}'],
+  ['非常规键 → Map 逃生门', '非法 label 键 + 同值类型 → Map[String, V]', '{"Content-Type": "application/json", "x_custom": "v"}'],
+  ['tagged-enum 识别提示', '{Tag: ...} 形态给 J4030 提示建议手写 enum（仍按原样导入）', '{"actions": [{"Void": true}, {"Copy": true}]}'],
+  ['Int64 精确大数', '超 Int 范围上浮 Int64，repr 保真——JS number 在 2⁵³ 后丢精度，这里 9007199254740993 原样', '{"id": 9007199254740993}'],
+  ['浮点形态保真', '数值文本原样直传；1e10 降级规范化为 1.0e10（N 层 1≡1.0 值等价）', '{"pi": 3.14159, "neg": -0.5, "exp": 1e10}'],
+  ['空数组两级启发', '孤立空数组本会拒；同文件他处同名非空字段给元素类型线索（D-1）', '{"list": [], "nested": {"list": [1, 2]}}'],
+  ['emoji / 中文零转义', '降级输出 UTF-8 原样，无 \\uXXXX 噪音', '{"emoji": "🚀 中文"}'],
+];
+const REJECT = [
+  ['异构数组', '元素类型不相容（拼错 vs 异构无解，J4010）', '{"rows": [1, "a"]}'],
+  ['全 null 列', 'Option 基型无线索，给非 null 样本（J4003）', '{"id": 1, "u": null}'],
+  ['超 Int64 大数', '无损要求：超 Int64 诚实拒，不静默 Double（J4020）', '{"big": 123456789012345678901234567890}'],
+  ['重复键', '病态输入不替它选语义（J1003）', '{"k": 1, "k": 2}'],
+  ['空对象', '无字段可推（J4002）', '{"empty": {}, "id": 1}'],
+  ['孤立空数组', '无线索且全文件无同名字段可启发（J4001）', '{"items": []}'],
+  ['异值键对象', '键间类型不同的对象，请人工建模 struct（J4011）', '{"Content-Type": "text/html", "Content-Length": 123}'],
+];
+const MBT = [
+  ['enum 键集建模（D-5/D-12）', '带 payload 变体降级 = tag 对象展开（payload 进顶层 + "case" 键）；无参变体 = 变体名字符串——JSON 表达不了的异构数组这样建', 'struct Pt {\n  x : Int\n  y : Int\n}\nenum Shape {\n  Dot(Pt)\n  Unit\n}\npub let shapes : Array[Shape] = [Dot(Pt::{ x: 1, y: 2 }), Unit]'],
+  ['Option：None ↔ null', '后缀糖 T? 即 Option[T]；None 降级 null（无损直译），Some("x") 降级 "x"', 'struct S {\n  nick : String?\n}\npub let s : S = S::{ nick: Some("x") }'],
+  ['#| 多行字符串', '长中文文本不拼 \\n，降级行净内容以 \\n 连接', 'pub let doc : String = #|\n#| 第一行\n#| 第二行'],
+  ['注释与尾逗号丢弃', '.json.mbt 侧天然合法；降级为纯 JSON 时注释消失（写「为什么」不进产物）', 'pub let s = {\n  "a": 1, // 会消失\n}'],
+];
+
+function fill(id, items, side) {
+  const box = document.getElementById(id);
+  for (const [t, d, code] of items) {
+    const c = document.createElement('div');
+    c.className = 'card';
+    c.innerHTML = '<div class="t">' + t + '</div><div class="d">' + d + '</div>';
+    c.addEventListener('click', () => {
+      const ta = side === 'left' ? $left : $right;
+      ta.value = code;
+      paint(side);
+      convert(side);
+      ta.closest('.editor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    box.appendChild(c);
+  }
+}
+fill('eatCards', EAT, 'left');
+fill('rejectCards', REJECT, 'left');
+fill('mbtCards', MBT, 'right');
+
+// 初始示例
+$left.value = EAT[0][2];
+paint('left');
+convert('left');
+</script>
+</body>
+</html>
