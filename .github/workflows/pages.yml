@@ -1,0 +1,86 @@
+# pages playground 部署 —— 构建 js 引擎 + smoke 门禁 + GitHub Pages 发布
+#
+# 产物链（pages/index.html 页脚同款命令，勿单侧漂移）：
+#   moon build --target js pages/ffi → _build/js/debug/build/pages/ffi/ffi.js
+#   → cp 到 pages/ → node pages/smoke.mjs（22 断言——样例卡禁拍脑袋，
+#   一律真实引擎验证）→ index.html + ffi.js 上传部署
+#
+# 注意（2026-10-08 定案，陷阱见 PLAN §7）：
+#   - **debug 构建**：release 会 tree-shake link.exports（js 后端坑，已登记）
+#   - index.html 以 ESM 相对路径引 ffi.js → GitHub Pages 项目子路径
+#     （rustin-beep.github.io/jsonmbt/）天然兼容，勿改绝对路径
+#   - smoke = 部署门：断言红则不部署（假绿页面上线比没有页面更糟）
+
+name: Pages
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build / smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MoonBit
+        uses: hustcer/setup-moonbit@v1
+        with:
+          version: latest
+
+      - name: Setup Node（smoke 驱动）
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ci.yml 同款教训：setup-moonbit 只装二进制，registry 索引须先同步
+      - name: 同步 registry 索引
+        run: moon update
+
+      - name: 构建 js 引擎（debug——release 会 tree-shake exports）
+        run: |
+          moon build --target js pages/ffi
+          cp _build/js/debug/build/pages/ffi/ffi.js pages/ffi.js
+
+      - name: Smoke（22 断言——部署门）
+        run: node pages/smoke.mjs
+
+      - name: 组装站点产物
+        run: |
+          mkdir -p _site
+          cp pages/index.html pages/ffi.js _site/
+          ls -la _site/
+
+      - name: 上传 Pages artifact
+        if: github.ref == 'refs/heads/master'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: deploy
+    needs: build
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

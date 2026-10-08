@@ -121,7 +121,7 @@
   确定性：同输入永同输出（两次 build 逐字节 diff 为零，层 2 门禁锚定）。往返：JSON → .json.mbt → JSON 值语义等价（N 等价锚）。
   <br>标注细节：超 Int 范围整数上浮 <code>Int64</code>（repr 保真，JS number 会丢精度而这里不会）；<code>1e10</code> 降级规范化为 <code>1.0e10</code>（N 层 1≡1.0 值等价）；Option 写法 = MoonBit 后缀糖 <code>String?</code>。
   <br>demo 引擎 = MoonBit src 包 js 后端出口（wasm-gc 的 String ABI 依赖 js-string-builtins 提案，当前工具链未支持——已实测登记）。
-  <br>重建引擎产物（ffi.js 不入库）：<code>MOON_CC=clang moon build --target js pages/ffi && cp _build/js/debug/build/pages/ffi/ffi.js pages/</code>（release 会 tree-shake link.exports，用 debug——已登记待解）；冒烟：<code>node pages/smoke.mjs</code>。
+  <br>本页由 CI 自动构建部署（push master → <code>.github/workflows/pages.yml</code>：js 构建 + 22 断言 smoke 门 + GitHub Pages 发布，smoke 红不上线）；本地重建引擎产物（ffi.js 不入库）：<code>MOON_CC=clang moon build --target js pages/ffi && cp _build/js/debug/build/pages/ffi/ffi.js pages/</code>（release 会 tree-shake link.exports，用 debug——已登记待解）；冒烟：<code>node pages/smoke.mjs</code>。
 </footer>
 
 <script type="module">

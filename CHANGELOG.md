@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Added（pages CI 接线：GitHub Pages 自动部署）
+
+- `.github/workflows/pages.yml`：push master / PR / 手动触发——js 引擎构建（debug，release tree-shake 坑已登记）→ **22 断言 smoke 作部署门**（断言红不上线）→ index.html + ffi.js 上传 → `deploy-pages` 发布；PR 只验不部署
+- Pages 站点经 API 启用（`build_type=workflow`）：<https://rustin-beep.github.io/jsonmbt/>（HTTPS 强制；index.html ESM 相对路径天然兼容项目子路径）
+- index.html 页脚更新为 CI 自动部署说明
+
 ### Added（issue #5：`jsonmbt doctor` 只读接入诊断）
 
 - `jsonmbt doctor [dir]`——诊断「这个仓的 .json.mbt 有没有真正接上 MoonBit 工具链」（Vitro 批②最大坑：不在包边界内的文件 moon 完全看不见，「验证了没被编译的东西等于没验证」）。**只诊断不 setup**（包怎么切/workspace 怎么分是用户仓的结构决策）
