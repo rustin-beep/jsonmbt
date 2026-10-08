@@ -9,6 +9,7 @@ pub(all) enum JCode {
   JSyntax // J1001 .json.mbt 语法错（parser Report）
   JJsonSyntax // J1002 JSON 输入语法错（对拍/N 的 JSON 侧输入；importer 同族复用）
   JDupKey // J1003 JSON 重复键（病态输入，不替它选语义——D-11）
+  JBadNameMap // J1010 type-name-map 语义错：值非合法类型名/撞已占类型/映射文件形态非对象（#6-4）
   JNoDoc // J2001 缺顶层 pub let（D-7）
   JMultiDoc // J2002 多个顶层 pub let（D-7）
   JStemMismatch // J2003 pub let 名与文件 stem 不符（D-7；stdin 免）
@@ -44,6 +45,7 @@ pub fn JCode::num(self : JCode) -> String {
     JSyntax => "J1001"
     JJsonSyntax => "J1002"
     JDupKey => "J1003"
+    JBadNameMap => "J1010"
     JNoDoc => "J2001"
     JMultiDoc => "J2002"
     JStemMismatch => "J2003"

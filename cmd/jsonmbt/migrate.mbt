@@ -1,0 +1,250 @@
+// jsonmbt migrate（issue #6-5）：批量迁移侦察三榜报告——把「探测哪些能迁」
+// 从下游仓手写 shell 脚本（逐张 import → build --pretty → cmp 原文 → 分类）
+// 产品化。默认**零写**（侦察契约：跑前后目录不变）；--write 才落盘非
+// reject 产物。rc：任一 reject/diff → 1（CI 迁移完成度闸）；全 byte/value → 0。
+//
+// 三榜（判定优先级降序）：
+//   BYTE-EQ (pretty|compact)：行尾归一后逐字节相等——可直接进 CI 对账
+//   VALUE-EQ：值语义等价、键序不敏感（@src.json_value_eq）——风格差，
+//             接 CI 对账前须确认字节口径
+//   REJECT：import 阻断（J 码 + 消息首行）
+// 内存 taken 累积 = 模拟「逐张真实迁移」的同目录撞名序列（#4 前缀化
+// 复现），前缀化发生时告警指向 --type-name-map。
+
+///|
+/// 收集待迁 .json（跳过隐藏/_build/node_modules/target；跳过已有同名
+// .json.mbt 的——已迁移不重复报）
+fn collect_json_files(
+  dir : String,
+  prefix : String,
+  out : Array[(String, String)], // (显示相对路径, 盘面路径)
+) -> Unit {
+  let entries = @fs.read_dir(dir) catch { _ => return }
+  for e in entries {
+    let full = dir + "/" + e
+    let disp = prefix + e
+    if e.has_suffix(".json") && file_exists(full) {
+      if !file_exists(dir + "/" + e[:e.length() - 5].to_owned() + ".json.mbt") {
+        out.push((disp, full))
+      }
+    } else if dir_exists(full) &&
+      !e.has_prefix(".") &&
+      e != "_build" &&
+      e != "node_modules" &&
+      e != "target" {
+      collect_json_files(full, disp + "/", out)
+    }
+  }
+}
+
+///|
+/// 产物 struct 名扫描（taken 累积与前缀化告警的判据）
+fn struct_names_of(content : String) -> Array[String] {
+  let names : Array[String] = []
+  for line in content.split("\n") {
+    if line.has_prefix("pub struct ") {
+      let rest : String = line[11:].to_owned()
+      let name = rest[:first_space_or_end(rest)].to_owned()
+      if name.length() > 0 {
+        names.push(name)
+      }
+    }
+  }
+  names
+}
+
+///|
+/// 行尾 + 尾换行归一后逐字节比对
+fn byte_eq(a : String, b : String) -> Bool {
+  let na = normalize_eol(a)
+  let nb = normalize_eol(b)
+  trim_trailing_nl(na) == trim_trailing_nl(nb)
+}
+
+///|
+fn trim_trailing_nl(s : String) -> String {
+  let mut end = s.length()
+  let chars = s.to_array()
+  while end > 0 && (chars[end - 1] == '\n' || chars[end - 1] == '\r') {
+    end = end - 1
+  }
+  let buf = StringBuilder()
+  for i = 0; i < end; i = i + 1 {
+    buf.write_char(chars[i])
+  }
+  buf.to_string()
+}
+
+///|
+fn run_migrate(root_arg : String, write : Bool) -> Int {
+  if !dir_exists(root_arg) {
+    return jdiag_exit(@src.JIO, "migrate: '\{root_arg}' is not a directory")
+  }
+  print_out("jsonmbt migrate \{root_arg}\{if write { " --write" } else { "" }}")
+  let files : Array[(String, String)] = []
+  collect_json_files(root_arg, "", files)
+  if files.length() == 0 {
+    print_out("no .json found under '\{root_arg}' (files with an existing .json.mbt twin are skipped)")
+    return 0
+  }
+  print_out("scanned: \{files.length()} json file(s)\n")
+  // 内存 taken 模拟（#4 逐张迁移的撞名序列复现）
+  let taken : Array[String] = []
+  let mut n_byte = 0
+  let mut n_value = 0
+  let mut n_reject = 0
+  for f in files {
+    let (disp, full) = f
+    let raw = @fs.read_file_to_string(full) catch {
+      _ => {
+        print_out("\{disp} → REJECT (cannot read)")
+        n_reject = n_reject + 1
+        continue
+      }
+    }
+    let stem = match json_stem_of(full) {
+      Some(s) => sanitize_stem_cli(s)
+      None => {
+        print_out("\{disp} → REJECT (no usable stem)")
+        n_reject = n_reject + 1
+        continue
+      }
+    }
+    // import（taken 传入 → 跨文件前缀化在此发生）
+    let outcome = try {
+      Ok(@src.import_source(raw, path=disp, stem~, taken_names=taken))
+    } catch {
+      e =>
+        if e is @src.Diag(..) {
+          Err(e.render())
+        } else {
+          Err("internal: non-Diag error")
+        }
+    }
+    match outcome {
+      Err(rendered) => {
+        // J 码 + 消息首行（render 首行 = jsonmbt: error [Jxxxx] path:l:c msg）
+        let first : String = match rendered.find("\n") {
+          Some(i) => rendered[:i].to_owned()
+          None => rendered
+        }
+        print_out("\{disp} → REJECT \{first}")
+        n_reject = n_reject + 1
+        continue
+      }
+      Ok(o) => {
+        let content = o.content
+        // 降级产物（compact / pretty）与原文件的值树（失败 = 不可比，保守按不等）
+        let built_compact : String? = try {
+          Some(@src.build_source(content, path=disp + ".mbt"))
+        } catch {
+          _ => None
+        }
+        let built_pretty : String? = try {
+          Some(@src.build_source(content, path=disp + ".mbt", pretty=true))
+        } catch {
+          _ => None
+        }
+        let value_eq = match (built_compact, parse_for_cmp(raw)) {
+          (Some(bc), Some(orig)) =>
+            match parse_for_cmp(bc) {
+              Some(bj) => @src.json_value_eq(orig, bj)
+              None => false
+            }
+          _ => false
+        }
+        let mut kind = "DIFF (round-trip mismatch — please report)"
+        match built_pretty {
+          Some(bp) =>
+            if byte_eq(bp, raw) {
+              kind = "BYTE-EQ (pretty)"
+              n_byte = n_byte + 1
+            }
+          None => ()
+        }
+        if kind == "DIFF (round-trip mismatch — please report)" {
+          match built_compact {
+            Some(bc) =>
+              if byte_eq(bc, raw) {
+                kind = "BYTE-EQ (compact)"
+                n_byte = n_byte + 1
+              }
+            None => ()
+          }
+        }
+        if kind == "DIFF (round-trip mismatch — please report)" && value_eq {
+          kind = "VALUE-EQ"
+          n_value = n_value + 1
+        }
+        if kind == "DIFF (round-trip mismatch — please report)" {
+          // 往返值不等：理论不可达（无损承诺）——诚实榜，出现即产品缺陷信号
+          n_reject = n_reject + 1
+        }
+        print_out("\{disp} → \{kind}")
+        // #4 前缀化告警：产物含 capitalize(stem)+X 形态 → 指路语义命名
+        let prefix_probe = capitalize_cli(stem)
+        for name in struct_names_of(content) {
+          if name.length() > prefix_probe.length() && name.has_prefix(prefix_probe) {
+            print_out(
+              "  note: '\{name}' is a stem-prefixed collision name — consider --type-name-map for a semantic name",
+            )
+            break
+          }
+        }
+        // taken 累积（下一张的撞名语境）
+        for name in struct_names_of(content) {
+          if !taken.contains(name) {
+            taken.push(name)
+          }
+        }
+        // --write：非 reject/diff 落盘
+        if write && !kind.has_prefix("DIFF") {
+          atomic_write(full[:full.length() - 5].to_owned() + ".json.mbt", content) catch {
+            _ => print_out("  error: cannot write '\{disp}.json.mbt'")
+          }
+        }
+      }
+    }
+  }
+  print_out(
+    "\nsummary: \{files.length()} file(s): \{n_byte} byte-eq, \{n_value} value-eq, \{n_reject} reject",
+  )
+  if n_value > 0 {
+    print_out(
+      "hint: \{n_value} value-eq file(s) — confirm the byte-level contract (e.g. --pretty --indent N) before wiring CI freshness checks",
+    )
+  }
+  if n_reject > 0 {
+    1
+  } else {
+    0
+  }
+}
+
+///|
+fn parse_for_cmp(text : String) -> Json? {
+  try {
+    Some(@src.json_parse(@src.strip_jsonc(text), fname="<cmp>"))
+  } catch {
+    _ => None
+  }
+}
+
+///|
+/// cmd 层的 stem 清洗（sanitize_stem 在 src 层是 pub——直接复用）
+fn sanitize_stem_cli(name : String) -> String {
+  @src.sanitize_stem(name)
+}
+
+///|
+fn capitalize_cli(s : String) -> String {
+  if s == "" {
+    return s
+  }
+  let first = s[0]
+  if first >= 'a' && first <= 'z' {
+    (first.to_int() - 32).unsafe_to_char().to_string() + s[1:].to_owned()
+  } else {
+    s
+  }
+}

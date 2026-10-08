@@ -60,6 +60,7 @@ fn build_value_of(doc : Doc) -> Json raise Diag {
 pub(all) struct ImportOutcome {
   content : String // 生成的 .json.mbt 全文
   hints : Array[Diag]
+  unmatched : Array[String] // --type-name-map 未命中的键（#6-4——typo 核对提示，不阻断）
 }
 
 ///|
@@ -111,13 +112,20 @@ pub fn import_source(
   path? : String = "<json>",
   stem~ : String,
   taken_names? : Array[String] = [],
+  type_name_map? : Map[String, String] = Map([]),
 ) -> ImportOutcome raise Diag {
   // stem 前置清洗（化石批量实锤："array_address.c" 文件名直接作 stem 产
   // 非法 binding/类型名——曾靠生成保险丝兜底成 internal 错，现正名）
   let stem = sanitize_stem(stem)
   let stripped = strip_jsonc(json_text)
   let root = json_parse(stripped, fname=path)
-  let result = infer_shapes(root, stem~, fname=path, taken=taken_names)
+  let result = infer_shapes(
+    root,
+    stem~,
+    fname=path,
+    taken=taken_names,
+    type_name_map~,
+  )
   let content = generate_source(result, root, stem~, src_name=path)
   // 保险丝（审 P1-1 处方）：产物丢回自家校验器回吃——生成器任何非法输出
   // 在落盘前 fail loud（import 产物承诺 = 合法 .json.mbt，PLAN §1.3）
@@ -140,5 +148,58 @@ pub fn import_source(
       )
     }
   }
-  { content, hints: result.hints, }
+  // unmatched = 映射键集 - 命中集（首见序——映射表声明序）
+  let unmatched : Array[String] = []
+  type_name_map.each(fn(k, _) {
+    if !result.map_hits.contains(k) {
+      unmatched.push(k)
+    }
+  })
+  { content, hints: result.hints, unmatched, }
+}
+
+///|
+/// 值语义等价（键序不敏感；#6-5 migrate 的 value-eq 榜判据）：
+/// Object = 键集相等 + 逐键递归；Array = 序敏感逐元素；Number = repr
+/// 相等或双精度值相等（1 ≡ 1.0 ≡ 1e0——N 层语义；局限：>2^53 不同大数
+/// 双精度坍缩同值时误等——往返无损承诺下不可达，极端场景以 byte-eq 榜兜底）
+pub fn json_value_eq(a : Json, b : Json) -> Bool {
+  match (a, b) {
+    (Null, Null) => true
+    (True, True) => true
+    (False, False) => true
+    (String(x), String(y)) => x == y
+    (Number(x, ..), Number(y, ..)) => x == y
+    (Array(xs), Array(ys)) => {
+      if xs.length() != ys.length() {
+        return false
+      }
+      let mut ok = true
+      for i = 0; i < xs.length(); i = i + 1 {
+        if !json_value_eq(xs[i], ys[i]) {
+          ok = false
+          break
+        }
+      }
+      ok
+    }
+    (Object(xo), Object(yo)) => {
+      if xo.length() != yo.length() {
+        return false
+      }
+      let mut ok = true
+      xo.each(fn(k, v) {
+        match yo.get(k) {
+          Some(w) => {
+            if !json_value_eq(v, w) {
+              ok = false
+            }
+          }
+          None => ok = false
+        }
+      })
+      ok
+    }
+    _ => false
+  }
 }

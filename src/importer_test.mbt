@@ -627,3 +627,88 @@ test "build : field-alias 注记的解析与校验（J3009 家族，#13）" {
   }
   inspect(bad3.contains("[J3009]"), content="true")
 }
+
+///|
+test "import : Map 值类型命名改宿主键派生（#6-4）" {
+  // 现状（issue 评论拍板采纳）：Map 值组名取首字段派生——cases 的值是
+  // 4 字段 digest 条目却叫 Src_sha（误导）；改宿主键派生 cases → CasesEntry
+  let json = "{\"cases\": {\"a.c\": {\"src_sha\": \"s1\", \"exit_code\": 0}, \"b.c\": {\"src_sha\": \"s2\", \"exit_code\": 1}}}"
+  let out = do_import(json)
+  inspect(out.contains("pub struct CasesEntry"), content="true")
+  inspect(out.contains("Map[String, CasesEntry]"), content="true")
+  inspect(out.contains("pub struct Src_sha"), content="false")
+  // 往返：键序 = 源序（cases/a.c/b.c），值无损
+  let built = @src.build_source(out, path="t.json.mbt")
+  inspect(
+    built,
+    content="{\"cases\":{\"a.c\":{\"src_sha\":\"s1\",\"exit_code\":0},\"b.c\":{\"src_sha\":\"s2\",\"exit_code\":1}}}",
+  )
+}
+
+///|
+test "import : --type-name-map 语义命名（#6-4）" {
+  // 机器派生名（Id/File2 等）零信息量——映射表给人起名的入口；
+  // 键 = 派生名（用户从首次 import 产物里看到的），值 = 语义名
+  let json = "{\"items\": [{\"id\": 1, \"file\": \"x\"}]}"
+  let map : Map[String, String] = { "Id": "Entry" }
+  let outcome = @src.import_source(
+    json,
+    path="t.json",
+    stem="t",
+    type_name_map=map,
+  )
+  inspect(outcome.content.contains("pub struct Entry"), content="true")
+  inspect(outcome.content.contains("pub struct Id"), content="false")
+  inspect(
+    outcome.content.contains("Entry::{ id: 1, file: \"x\" }"),
+    content="true",
+  )
+  // 命中的映射键不出现在 unmatched
+  inspect(outcome.unmatched.length(), content="0")
+  // 往返等价
+  let built = @src.build_source(outcome.content, path="t.json.mbt")
+  inspect(built, content="{\"items\":[{\"id\":1,\"file\":\"x\"}]}")
+}
+
+///|
+test "import : --type-name-map 未命中键不阻断（hint 面，#6-4）" {
+  let map : Map[String, String] = { "Id": "Entry", "Nope": "X" }
+  let outcome = @src.import_source(
+    "{\"items\": [{\"id\": 1, \"file\": \"x\"}]}",
+    path="t.json",
+    stem="t",
+    type_name_map=map,
+  )
+  inspect(outcome.unmatched.length(), content="1")
+  inspect(outcome.unmatched.contains("Nope"), content="true")
+}
+
+///|
+test "import : --type-name-map 语义错拒绝（J1010，#6-4）" {
+  // 值非法类型名（小写开头）
+  let d1 = try {
+    let _ = @src.import_source(
+      "{\"items\": [{\"id\": 1}]}",
+      path="t.json",
+      stem="t",
+      type_name_map={ "Id": "entry" },
+    )
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d1.contains("[J1010]"), content="true")
+  // 值与顶层 struct 名撞车（stem 派生 T 已占）
+  let d2 = try {
+    let _ = @src.import_source(
+      "{\"items\": [{\"id\": 1}]}",
+      path="t.json",
+      stem="t",
+      type_name_map={ "Id": "T" },
+    )
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d2.contains("[J1010]"), content="true")
+}

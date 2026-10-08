@@ -127,6 +127,9 @@ priv struct InferCtx {
   name_cache : Map[String, String] // 签名 → struct 名
   aliases : Array[(String, String, String)] // (struct 名, 改名后 label, 原始 JSON 键)——field-alias 注记（#13）
   map_escape_keys : Array[String] // 走了 Map 逃生门的非法键（首见序去重——J4011 文案点名键因）
+  type_map : Map[String, String] // 派生名 → 用户语义名（--type-name-map，#6-4）
+  map_hits : Array[String] // 命中的映射键（首见序——unmatched = 键集 - 命中集）
+  map_value_hints : Map[String, String] // 容器路径 → 组名基名（Map 值对象宿主键派生，#6-4）
   hints : Array[Diag]
   hint_keys : Array[String] // tagged-enum 提示去重（按键名）
   taken : Array[String] // 同目录已占类型名（跨文件去重——issue #4）
@@ -140,6 +143,7 @@ priv struct InferResult {
   root_ty : JType?
   hints : Array[Diag]
   aliases : Array[(String, String, String)] // (struct 名, label, 原始键)——codegen 发射注记用
+  map_hits : Array[String] // --type-name-map 命中键集（#6-4）
 }
 
 ///|
@@ -156,6 +160,7 @@ fn infer_shapes(
   stem~ : String,
   fname? : String = "<json>",
   taken? : Array[String] = [],
+  type_name_map? : Map[String, String] = Map([]),
 ) -> InferResult raise Diag {
   let ctx : InferCtx = {
     groups: Map([]),
@@ -164,6 +169,9 @@ fn infer_shapes(
     name_cache: Map([]),
     aliases: [],
     map_escape_keys: [],
+    type_map: type_name_map,
+    map_hits: [],
+    map_value_hints: Map([]),
     hints: [],
     hint_keys: [],
     taken,
@@ -229,7 +237,13 @@ fn infer_shapes(
   if has_empty_array(root_ty) {
     raise empty_arr_diag(ctx, "(top level)", "(elements)")
   }
-  { structs, root_ty: Some(root_ty), hints: ctx.hints, aliases: ctx.aliases, }
+  {
+    structs,
+    root_ty: Some(root_ty),
+    hints: ctx.hints,
+    aliases: ctx.aliases,
+    map_hits: ctx.map_hits,
+  }
 }
 
 ///|
@@ -253,7 +267,7 @@ fn strip_option(t : JType) -> JType {
 }
 
 ///|
-fn prename_top_group(ctx : InferCtx, root : Json) -> Unit {
+fn prename_top_group(ctx : InferCtx, root : Json) -> Unit raise Diag {
   if root is Object(o) && o.length() > 0 {
     let keys : Array[String] = []
     o.each(fn(k, _) { keys.push(k) })
@@ -275,20 +289,69 @@ fn finalize_empty_root(ctx : InferCtx, root_ty : JType) -> Unit raise Diag {
 }
 
 ///|
-fn alloc_type_name(ctx : InferCtx, base : String) -> String {
+/// #6-4：--type-name-map 语义错诊断（值非法/撞名）
+fn bad_name_map_diag(ctx : InferCtx, msg : String) -> Diag raise Diag {
+  raise Diag(
+    code=JBadNameMap,
+    loc=dummy_loc(),
+    message="type-name-map error: \{msg}",
+    help=Some(
+      "keys are the auto-derived names from a first import; values must be legal, unused MoonBit type names",
+    ),
+    path=ctx.fname,
+  )
+}
+
+///|
+fn alloc_type_name(ctx : InferCtx, base : String) -> String raise Diag {
   // issue #4：嵌套 struct 机器派生名（Id/Code 等）在同目录多文件时撞
   // moon 包命名空间——后来者加 stem 前缀（先到先得，单文件零变化）
   let primed0 = if is_legal_type_name(base) { base } else { "Root" }
-  if ctx.taken.contains(primed0) && primed0 != capitalize(ctx.stem) {
+  let derived : String = if ctx.taken.contains(primed0) &&
+    primed0 != capitalize(ctx.stem) {
     let prefixed = capitalize(ctx.stem) + primed0
     if is_legal_type_name(prefixed) && !ctx.used_type_names.contains(prefixed) {
-      ctx.used_type_names.push(prefixed)
-      return prefixed
+      prefixed
+    } else {
+      dedup_fallback(ctx, primed0)
+    }
+  } else {
+    dedup_fallback(ctx, primed0)
+  }
+  // #6-4：派生名过语义映射——键 = 最终派生名（用户在首次 import 产物里
+  // 看到的形态）；值校验 fail loud（非法/撞已占），命中记录供 unmatched 报告
+  match ctx.type_map.get(derived) {
+    Some(user) => {
+      if !is_legal_type_name(user) {
+        raise bad_name_map_diag(
+          ctx,
+          "'\{derived}' → '\{user}': not a legal type name (expect an Uppercase start)",
+        )
+      }
+      if ctx.used_type_names.contains(user) ||
+        (ctx.taken.contains(user) && user != capitalize(ctx.stem)) {
+        raise bad_name_map_diag(
+          ctx,
+          "'\{derived}' → '\{user}': collides with another type in this file or directory",
+        )
+      }
+      if !ctx.map_hits.contains(derived) {
+        ctx.map_hits.push(derived)
+      }
+      ctx.used_type_names.push(user)
+      user
+    }
+    None => {
+      ctx.used_type_names.push(derived)
+      derived
     }
   }
-  let primed = primed0
+}
+
+///|
+/// 去重兜底：primed 可用即用；被占则后缀 2/3/…（首见序确定性）
+fn dedup_fallback(ctx : InferCtx, primed : String) -> String {
   if !ctx.used_type_names.contains(primed) {
-    ctx.used_type_names.push(primed)
     return primed
   }
   let mut i = 2
@@ -301,8 +364,24 @@ fn alloc_type_name(ctx : InferCtx, base : String) -> String {
     }
     i = i + 1
   }
-  ctx.used_type_names.push(candidate)
   candidate
+}
+
+///|
+/// 容器路径尾段（宿主字段名提取，#6-4）：$.cases → cases；$ / …[] / 尾段
+/// 非法形态 → ""（无宿主——调用方 fallback）
+fn last_path_segment(path : String) -> String {
+  match path.rev_find(".") {
+    Some(i) => {
+      let seg = path[i + 1:].to_owned()
+      if seg == "" || seg.contains("[") || seg.contains("]") {
+        ""
+      } else {
+        seg
+      }
+    }
+    None => ""
+  }
 }
 
 ///|
@@ -371,12 +450,25 @@ fn walk_value(
             }
           }
         }
-        // 键名逃生门：非 String 值类型聚合（同构 → Map；异值键 J4011）
+        // 键名逃生门：非 String 值类型聚合（同构 → Map；异值键 J4011）。
+        // 值位对象的组名基名预登记**宿主字段**派生（#6-4 拍板：cases 值 →
+        // CasesEntry——Map 持有者的名字才是语义锚；条目键（a.c）无语义）。
+        // 宿主 = 当前 path 尾段（$.cases → cases）；数组位/顶层无宿主 →
+        // 不登记，组名 fallback 首键派生（首见定型，确定性保持）
+        let host = last_path_segment(path)
         let samples : Array[SampleTy] = []
         let ks : Array[String] = []
         o.each(fn(k, _) { ks.push(k) })
         for k in ks {
-          let t = walk_value(ctx, o.get(k).unwrap(), path=path + "." + k)
+          let v = o.get(k).unwrap()
+          if v is Object(_) && host != "" {
+            let hint_path = path + "." + k
+            if !ctx.map_value_hints.contains(hint_path) {
+              ctx.map_value_hints[hint_path] = capitalize(sanitize_stem(host)) +
+                "Entry"
+            }
+          }
+          let t = walk_value(ctx, v, path=path + "." + k)
           samples.push(if t is JTNullLike { NullSample } else { Ty(t) })
         }
         JTMap(
@@ -459,13 +551,18 @@ fn walk_as_struct(
     }
     ctx.groups[sig] = g
     ctx.group_order.push(sig)
-    // 命名：预命名（顶层）优先；否则组首**原始**键 capitalize（where →
-    // Where——大写保留字派生类型名合法，探针实锚；中文/不可大写化 → Root 系）
+    // 命名：预命名（顶层）优先；Map 值对象用宿主键派生基名（#6-4——
+    // cases 的值是完整条目，首键派生 Src_sha 误导）；否则组首**原始**键
+    // capitalize（where → Where——大写保留字派生类型名合法，探针实锚）
     if !ctx.name_cache.contains(sig) {
-      let base = if g.keys.length() > 0 {
-        capitalize(g.keys[0])
-      } else {
-        capitalize(ctx.stem)
+      let base = match ctx.map_value_hints.get(path) {
+        Some(hint) => hint
+        None =>
+          if g.keys.length() > 0 {
+            capitalize(g.keys[0])
+          } else {
+            capitalize(ctx.stem)
+          }
       }
       ctx.name_cache[sig] = alloc_type_name(ctx, base)
     }

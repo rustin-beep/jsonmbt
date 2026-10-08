@@ -49,10 +49,11 @@ fn usage() -> Int {
     "usage:\n" +
     "  jsonmbt build <file.json.mbt...|-> [-o <out.json>|-]\n" +
     "  jsonmbt check <file.json.mbt...|->\n" +
-    "  jsonmbt import <file.json|-> [-o <out.json.mbt>|-] [--check] [--fmt]\n" +
+    "  jsonmbt import <file.json|-> [-o <out.json.mbt>|-] [--check] [--fmt] [--type-name-map <map.json>]\n" +
     "  jsonmbt doctor [dir] — read-only diagnosis: is this repo's .json.mbt really wired into moon?\n" +
+    "  jsonmbt migrate [dir] [--write] — batch scout: byte-eq / value-eq / reject report per .json\n" +
     "degrade: .json.mbt -> .json (deterministic, compact); `-` reads stdin, `-o -` writes to stdout\n" +
-    "ingest: .json/.jsonc -> .json.mbt (shape inference); --check = idempotence gate\n" +
+    "ingest: .json/.jsonc -> .json.mbt (shape inference); --check = idempotence gate; --type-name-map renames derived struct names\n" +
     "rc: 0 ok / 1 input error (doctor: blocked) / 2 drift detected (--check) / 4 usage/IO",
   )
   4
@@ -153,11 +154,51 @@ fn filepath_dir(path : String) -> String {
 }
 
 ///|
+/// --type-name-map 文件 → 派生名→语义名映射（#6-4）。形态校验：顶层对象、
+/// 键值全 String；坏 JSON → J1002、形态错 → J1010（与 infer 侧同码族）
+fn load_type_name_map(path : String) -> Map[String, String] raise @src.Diag {
+  let text = @fs.read_file_to_string(path) catch {
+    _ => raise io_diag("cannot read type-name-map '\{path}'")
+  }
+  // 与 import 同链（含 JSONC 容忍——映射表可带注释说明各键用途）
+  let root = @src.json_parse(@src.strip_jsonc(text), fname=path) catch {
+    e => raise e
+  }
+  let out : Map[String, String] = Map([])
+  match root {
+    Object(o) =>
+      o.each(fn(k, v) {
+        match v {
+          String(s) => out[k] = s
+          _ =>
+            raise @src.Diag(
+              code=@src.JBadNameMap,
+              loc=dummy_loc(),
+              message="type-name-map '\{path}': value of '\{k}' must be a string",
+              help=Some("format: {\"DerivedName\": \"SemanticName\", ...}"),
+              path=path,
+            )
+        }
+      })
+    _ =>
+      raise @src.Diag(
+        code=@src.JBadNameMap,
+        loc=dummy_loc(),
+        message="type-name-map '\{path}' must be a JSON object of {\"DerivedName\": \"SemanticName\"}",
+        help=Some("run a first import, copy the auto-derived struct names as keys"),
+        path=path,
+      )
+  }
+  out
+}
+
+///|
 fn run_import(
   path : String,
   out_opt : String?,
   check : Bool,
   fmt : Bool,
+  type_name_map~ : Map[String, String] = Map([]),
 ) -> Int {
   let src = read_input(path) catch {
     e =>
@@ -218,7 +259,13 @@ fn run_import(
   } else {
     scan_taken_struct_names(import_target)
   }
-  let outcome = @src.import_source(src, path=display, stem~, taken_names=taken) catch {
+  let outcome = @src.import_source(
+    src,
+    path=display,
+    stem~,
+    taken_names=taken,
+    type_name_map~,
+  ) catch {
     e =>
       if e is @src.Diag(..) {
         return print_diag_exit(e)
@@ -228,6 +275,12 @@ fn run_import(
   }
   for h in outcome.hints {
     print_hint(h)
+  }
+  // #6-4：映射键未命中 → hint（不阻断——映射表可超前写；typo 核对提示）
+  for k in outcome.unmatched {
+    write_stderr(
+      "jsonmbt: hint: type-name-map key '\{k}' matched no generated type name — check it against the struct names in the output",
+    )
   }
   let target = import_target
   if check && fmt {
@@ -416,8 +469,38 @@ fn main_rc() -> Int {
     return usage()
   }
   let verb = args[1]
-  if verb != "build" && verb != "check" && verb != "import" && verb != "doctor" {
+  if verb != "build" &&
+    verb != "check" &&
+    verb != "import" &&
+    verb != "doctor" &&
+    verb != "migrate" {
     return jdiag_exit(@src.JUsage, "unknown command '\{verb}'")
+  }
+  // migrate（#6-5）：[dir] [--write]——侦察三榜报告；默认零写
+  if verb == "migrate" {
+    let mut dir = "."
+    let mut write = false
+    let mut i = 2
+    while i < args.length() {
+      let a = args[i]
+      if a == "--write" {
+        write = true
+      } else if a == "-h" || a == "--help" {
+        return usage()
+      } else if a.has_prefix("-") {
+        return jdiag_exit(
+          @src.JUsage,
+          "migrate takes a directory and/or --write (scout report; --write also lands non-reject products)",
+        )
+      } else {
+        if dir != "." {
+          return jdiag_exit(@src.JUsage, "migrate takes at most one directory")
+        }
+        dir = a
+      }
+      i = i + 1
+    }
+    return run_migrate(dir, write)
   }
   // doctor（#5）：独立参数面——恰好一个可选目录（默认 "."），无产物 flags
   if verb == "doctor" {
@@ -442,6 +525,7 @@ fn main_rc() -> Int {
   let mut do_fmt = false // import --fmt（#10）：产物落盘后跑 moon fmt 归一
   let mut do_pretty = false
   let mut do_indent : Int? = None // --pretty 缩进宽度（#6-1）；None = 未给（提示判据）
+  let mut type_map_path : String? = None // import --type-name-map <file>（#6-4）
   let mut i = 2
   while i < args.length() {
     let a = args[i]
@@ -484,6 +568,12 @@ fn main_rc() -> Int {
           )
       }
       i = i + 2
+    } else if a == "--type-name-map" {
+      if i + 1 >= args.length() {
+        return jdiag_exit(@src.JUsage, "--type-name-map requires a file argument")
+      }
+      type_map_path = Some(args[i + 1])
+      i = i + 2
     } else if a == "-h" || a == "--help" {
       return usage()
     } else {
@@ -519,7 +609,25 @@ fn main_rc() -> Int {
         "--indent applies to build only (import output shape is generator-defined)",
       )
     }
-    return run_import(paths[0], out_opt, do_check, do_fmt)
+    // #6-4：--type-name-map 是 import 专属（build/check 侧先拒——下方
+    // 共享解析循环收 flag，非 import verb 到达此处即误用）
+    let type_map : Map[String, String] = match type_map_path {
+      Some(p) =>
+        try {
+          load_type_name_map(p)
+        } catch {
+          e => return print_diag_exit(e)
+        }
+      None => Map([])
+    }
+    return run_import(paths[0], out_opt, do_check, do_fmt, type_name_map=type_map)
+  }
+  // import 专属 flag 出现在其他 verb = 误用（fail loud，防静默无效参数）
+  if type_map_path is Some(_) {
+    return jdiag_exit(
+      @src.JUsage,
+      "--type-name-map applies to import only",
+    )
   }
   if paths.length() > 1 && out_opt is Some(_) {
     return jdiag_exit(@src.JUsage, "-o accepts a single input")

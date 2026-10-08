@@ -659,6 +659,115 @@ func caseDoctorReadonly(exe, dir string) error {
 	return nil
 }
 
+// type-name-map（#6-4）：机器派生名 → 语义名映射全链。层 1 已锚语义；
+// 此处锚 CLI 进程面：flag 解析、映射文件读取与校验（J1010/J1002）、
+// 未命中键 hint（不阻断）、Map 值宿主键派生命名（CasesEntry）。
+func caseTypeNameMap(exe, dir string) error {
+	writeFile(dir, "items.json", `{"items": [{"id": 1, "file": "x"}]}`)
+	writeFile(dir, "map.json", `{"Id": "Entry"}`)
+	rc, _, _, err := runExe(exe, dir, "import", "items.json", "--type-name-map", "map.json", "-o", "items.json.mbt")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("import rc=%d err=%v", rc, err)
+	}
+	prod, _ := os.ReadFile(filepath.Join(dir, "items.json.mbt"))
+	s := string(prod)
+	if !strings.Contains(s, "pub struct Entry") || strings.Contains(s, "pub struct Id") {
+		return fmt.Errorf("映射未生效：\n%s", s)
+	}
+	if !strings.Contains(s, `Entry::{ id: 1, file: "x" }`) {
+		return fmt.Errorf("数据引用未随映射更新：\n%s", s)
+	}
+	// 往返
+	if rc, _, _, err := runExe(exe, dir, "build", "items.json.mbt"); err != nil || rc != 0 {
+		return fmt.Errorf("build rc=%d err=%v", rc, err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "items.json"))
+	if want := []byte(`{"items":[{"id":1,"file":"x"}]}`); !bytes.Equal(bytes.TrimRight(got, "\r\n"), want) {
+		return fmt.Errorf("round-trip 失败\n--want--\n%q\n--got--\n%q", want, got)
+	}
+	// 值非法（小写）→ J1010 rc 1
+	writeFile(dir, "bad1.json", `{"Id": "entry"}`)
+	if rc, _, stderr, _ := runExe(exe, dir, "import", "items.json", "--type-name-map", "bad1.json", "-o", "x.mbt"); rc != 1 || !bytes.Contains(stderr, []byte("[J1010]")) {
+		return fmt.Errorf("非法值应 J1010 rc1: rc=%d stderr=%q", rc, stderr)
+	}
+	// 形态错（数组）→ J1010 rc 1
+	writeFile(dir, "bad2.json", `[1,2]`)
+	if rc, _, stderr, _ := runExe(exe, dir, "import", "items.json", "--type-name-map", "bad2.json", "-o", "x.mbt"); rc != 1 || !bytes.Contains(stderr, []byte("[J1010]")) {
+		return fmt.Errorf("数组形态应 J1010 rc1: rc=%d stderr=%q", rc, stderr)
+	}
+	// 未命中键 → hint 不阻断（rc 0）
+	writeFile(dir, "unmatch.json", `{"Nope": "X"}`)
+	if rc, _, stderr, _ := runExe(exe, dir, "import", "items.json", "--type-name-map", "unmatch.json", "-o", "x2.mbt"); rc != 0 {
+		return fmt.Errorf("未命中应 rc0: rc=%d stderr=%q", rc, stderr)
+	}
+	// Map 值宿主键派生（#6-4 评论拍板）：cases 值 → CasesEntry（旧 = Src_sha 首键误导）
+	writeFile(dir, "digest.json", `{"cases": {"a.c": {"src_sha": "s1", "exit_code": 0}, "b.c": {"src_sha": "s2", "exit_code": 1}}}`)
+	if rc, _, _, err := runExe(exe, dir, "import", "digest.json", "-o", "digest.json.mbt"); err != nil || rc != 0 {
+		return fmt.Errorf("digest import rc=%d err=%v", rc, err)
+	}
+	d, _ := os.ReadFile(filepath.Join(dir, "digest.json.mbt"))
+	if !strings.Contains(string(d), "Map[String, CasesEntry]") || strings.Contains(string(d), "Src_sha") {
+		return fmt.Errorf("Map 值命名未用宿主派生：\n%s", d)
+	}
+	return nil
+}
+
+// migrate 子命令（#6-5）：批量迁移侦察三榜报告——byte-eq（可直进 CI 对账）/
+// value-eq（值等仅风格差，确认口径）/ reject（带 J 码原因）；默认零写
+// （--write 才落盘）；同目录撞名触发 stem 前缀化时告警指向 --type-name-map。
+func caseMigrate(exe, dir string) error {
+	// byte-eq（pretty）：2 空格缩进原文件 = build --pretty 逐字节
+	writeFile(dir, "cfg.json", "{\n  \"port\": 8080,\n  \"host\": \"localhost\"\n}")
+	// value-eq：1 空格缩进（风格差——值等键序同）
+	writeFile(dir, "style.json", "{\n \"a\": 1,\n \"b\": [2, 3]\n}")
+	// reject：异构数组
+	writeFile(dir, "bad.json", `{"rows": [1, "a"]}`)
+	rc, out, _, err := runExe(exe, dir, "migrate", ".")
+	if err != nil {
+		return err
+	}
+	if rc != 1 {
+		return fmt.Errorf("rc = %d, want 1 (有 reject)", rc)
+	}
+	s := string(out)
+	for _, frag := range []string{
+		"cfg.json", "BYTE-EQ",
+		"style.json", "VALUE-EQ",
+		"bad.json", "REJECT", "[J4010]",
+		"summary: 3 file(s): 1 byte-eq, 1 value-eq, 1 reject",
+	} {
+		if !strings.Contains(s, frag) {
+			return fmt.Errorf("报告缺 %q:\n%s", frag, s)
+		}
+	}
+	// 默认零写：没有任何 .json.mbt 落盘
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".json.mbt") {
+			return fmt.Errorf("默认模式不得写盘，发现 %s", e.Name())
+		}
+	}
+	// --write：非 reject 落盘（cfg/style 两张）
+	if rc, _, _, err := runExe(exe, dir, "migrate", ".", "--write"); err != nil || rc != 1 {
+		return fmt.Errorf("--write rc=%d err=%v（reject 仍在，rc 1）", rc, err)
+	}
+	for _, name := range []string{"cfg.json.mbt", "style.json.mbt"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			return fmt.Errorf("--write 未落盘 %s: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bad.json.mbt")); err == nil {
+		return fmt.Errorf("reject 文件不得落盘 bad.json.mbt")
+	}
+	// 无 json 目录：rc 0 + 提示
+	sub := filepath.Join(dir, "empty")
+	os.MkdirAll(sub, 0o755)
+	if rc, out2, _, err := runExe(exe, dir, "migrate", "empty"); err != nil || rc != 0 || !strings.Contains(string(out2), "no .json") {
+		return fmt.Errorf("空目录应 rc0 + 提示: rc=%d out=%q err=%v", rc, out2, err)
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"probe-samples-golden", caseProbeSamples},
@@ -680,6 +789,8 @@ var cases = []testCase{
 	{"doctor-dup-struct", caseDoctorDupStruct},
 	{"doctor-clean", caseDoctorClean},
 	{"doctor-readonly", caseDoctorReadonly},
+	{"type-name-map", caseTypeNameMap},
+	{"migrate-three-boards", caseMigrate},
 }
 
 func defaultExe() string {
