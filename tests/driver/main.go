@@ -785,6 +785,21 @@ func caseJ2007HelpText(exe, dir string) error {
 	if !bytes.Equal(stderr, want) {
 		return fmt.Errorf("stderr 逐字节不符（#15 文案对齐）：\n--want--\n%q\n--got--\n%q", want, stderr)
 	}
+	// #14 批次1：嵌套 Option（T??）收窄——静默压平（None 与 Some(None) 同降
+	// null）是无损红线违例，J2007 fail loud（递归拒任意深度；纯手写面）
+	writeFile(dir, "q.json.mbt", "struct S {\n  a : String??\n}\npub let q : S = S::{ a: None }\n")
+	rc, _, stderr, err = runExe(exe, dir, "check", "q.json.mbt")
+	if err != nil {
+		return err
+	}
+	if rc != 1 {
+		return fmt.Errorf("T?? rc = %d, want 1", rc)
+	}
+	want2 := []byte("jsonmbt: error [J2007] q.json.mbt:2:3 nested Option (T??) is outside the L0 subset — degradation would silently flatten None and Some(None) into the same null\n" +
+		"  help: use T? for nullable; the three-state encoding (absent vs null vs value) is under review — model the distinction by hand until then\n")
+	if !bytes.Equal(stderr, want2) {
+		return fmt.Errorf("T?? stderr 逐字节不符：\n--want--\n%q\n--got--\n%q", want2, stderr)
+	}
 	return nil
 }
 
@@ -820,6 +835,48 @@ func caseMigrateTakenTwins(exe, dir string) error {
 	return nil
 }
 
+// never-placeholder（#14-2a）：空容器默认 Never 底型占位——J4001/J4002 不再
+// 整张拒（--strict 恢复旧拒）；产物含 enum Never 定义 + 往返字节等价；
+// 冻结分支口径：孤空容器 REJECT 的 ~99% 场景直接可用。
+func caseNeverPlaceholder(exe, dir string) error {
+	writeFile(dir, "e.json", `{"exemptions": []}`)
+	rc, _, stderr, err := runExe(exe, dir, "import", "e.json", "-o", "e.json.mbt")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("import rc=%d err=%v stderr=%q", rc, err, stderr)
+	}
+	prod, _ := os.ReadFile(filepath.Join(dir, "e.json.mbt"))
+	for _, frag := range []string{"pub enum Never {}", "exemptions : Array[Never]", "exemptions: []"} {
+		if !strings.Contains(string(prod), frag) {
+			return fmt.Errorf("产物缺 %q:\n%s", frag, prod)
+		}
+	}
+	if !strings.Contains(string(stderr), "J4031") {
+		return fmt.Errorf("应给 J4031 占位 hint: stderr=%q", stderr)
+	}
+	// 往返字节等价
+	if rc, _, _, err := runExe(exe, dir, "build", "e.json.mbt"); err != nil || rc != 0 {
+		return fmt.Errorf("build rc=%d err=%v", rc, err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "e.json"))
+	if want := []byte(`{"exemptions":[]}`); !bytes.Equal(bytes.TrimRight(got, "\r\n"), want) {
+		return fmt.Errorf("往返不等\n--want--\n%q\n--got--\n%q", want, got)
+	}
+	// --strict 恢复旧拒（rc 1 J4001）
+	if rc, _, stderr, _ := runExe(exe, dir, "import", "e.json", "--strict", "-o", "x.mbt"); rc != 1 || !bytes.Contains(stderr, []byte("[J4001]")) {
+		return fmt.Errorf("--strict 应 J4001 rc1: rc=%d stderr=%q", rc, stderr)
+	}
+	// 空对象同机制（Map[String, Never]）
+	writeFile(dir, "o.json", `{"cfg": {}}`)
+	if rc, _, _, err := runExe(exe, dir, "import", "o.json", "-o", "o.json.mbt"); err != nil || rc != 0 {
+		return fmt.Errorf("空对象 import rc=%d err=%v", rc, err)
+	}
+	o, _ := os.ReadFile(filepath.Join(dir, "o.json.mbt"))
+	if !strings.Contains(string(o), "Map[String, Never]") {
+		return fmt.Errorf("空对象应 Map[String,Never]:\n%s", o)
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"probe-samples-golden", caseProbeSamples},
@@ -845,6 +902,7 @@ var cases = []testCase{
 	{"migrate-three-boards", caseMigrate},
 	{"j2007-help-text", caseJ2007HelpText},
 	{"migrate-taken-twins", caseMigrateTakenTwins},
+	{"never-placeholder", caseNeverPlaceholder},
 }
 
 func defaultExe() string {

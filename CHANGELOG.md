@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added（issue #14 批次 1+2a：T?? 收窄 + 空容器 Never 占位）
+
+- **T?? 递归收窄 J2007**（批次 1）：实测 `String??` 下 `None` 与 `Some(None)` 降级都成 `"a":null`——静默压平违反 §0 无损与 D-8 ②；`scan_supported_type` 嵌套 Option 分支 fail loud（任意深度递归拒，J2007 专属文案指向三态评审状态）。推断链只加一层 Option——**纯手写面，现存绿文件零影响**（层 1 三形态锚 + 层 2 golden 双证）。三态展平式（None=缺席/Some(None)=null/值）走 §8 评审；容器位（Map 值/数组元素）结构上无法缺席，评审落地前一并收窄
+- **空容器 Never 底型占位（默认）**（批次 2a）：J4001/J4002 不再整张拒——`exemptions : Array[Never]` / `cfg : Map[String, Never]`，产物含 `pub enum Never {}`（fmt 归一形态，探针实锚）；**一条机制同解空数组+空对象**（零信息容器的数学精确刻画——非猜测占位，输出逐字节不变）；**免费护栏**：元素位写值被 moon `[4014]` 与 jsonmbt J3004 双侧拦下；D-1 两级启发优先级保持（能推精确类型的绝不出 Never，收尾统一占位只兜真孤立）
+- **`--strict` 反向 opt-in**（严格档=旧行为）：空容器启发无解时如旧 J4001/J4002 拒（J4001/J4002 语义收窄到 strict 档——旧锚已迁移 strict 形态）
+- **J4031**（新码，rc 0）：占位 hint——非空样本出现后换真类型（或 re-import）
+- **Never 预留**：`used_type_names` 初始含 Never——`{"items":[{"never":1}]}` 派生组名被迫去重 Never2，底型名不被占用
+- probe/samples 新样本对 `empty_containers`（fmt-stable + moon check 编译面 + golden 往返）；层 1 91/91（+2 用例，3 旧锚迁移）、层 2 25/25（+1 用例）
+
 ### Fixed（深度审阅处置：P1×1 + P2×2 + P3×3 修 / P3×1 拍板登记）
 
 - **P1 部署门不挡红**：`pages/smoke.mjs` 断言失败只有 `console.log`、rc 恒 0——`pages.yml`「smoke 红不上线」承诺不成立。修：末尾 `if (bad) process.exit(1)` + 头注从「一次性勘探勿入防线」改为部署门口径（注入复现双向验证：坏断言 rc=1 / 正常 rc=0）

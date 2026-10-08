@@ -8,9 +8,13 @@ fn do_import(json : String, stem? : String = "t") -> String raise @src.Diag {
 }
 
 ///|
-fn expect_import_diag(json : String, code : String) -> Unit {
+fn expect_import_diag(
+  json : String,
+  code : String,
+  strict? : Bool = false,
+) -> Unit {
   let d = try {
-    let _ = do_import(json)
+    let _ = @src.import_source(json, path="t.json", stem="t", strict~)
     "IMPORT-SUCCEEDED-BUT-DIAGNOSTIC-EXPECTED"
   } catch {
     e =>
@@ -99,8 +103,8 @@ test "J1003 : JSON 重复键拒绝（病态输入不替它选语义）" {
 }
 
 ///|
-test "J4001 : 孤立空数组阻断（两级启发后无线索）" {
-  expect_import_diag("{\"empty\":[]}", "J4001")
+test "J4001 : 孤立空数组阻断（strict 档——默认已 Never 占位，#14-2a）" {
+  expect_import_diag("{\"empty\":[]}", "J4001", strict=true)
 }
 
 ///|
@@ -119,8 +123,8 @@ test "D-1 : 空数组二级启发（同名字段他处非空 → 复用）" {
 }
 
 ///|
-test "J4002 : 空对象单独形态" {
-  expect_import_diag("{\"obj\":{}}", "J4002")
+test "J4002 : 空对象单独形态（strict 档——默认已 Map[String,Never] 占位，#14-2a）" {
+  expect_import_diag("{\"obj\":{}}", "J4002", strict=true)
 }
 
 ///|
@@ -216,10 +220,10 @@ test "P1-2 防回归 : 控制字符生成合法 U+XXXX 形态转义（三段写�
 }
 
 ///|
-test "P1-3/4 防回归 : 空数组中间态不逃逸（Option/嵌套容器）→ 诚实阻断" {
-  expect_import_diag("[{\"a\":null},{\"a\":[]}]", "J4001") // Array[?]? 泄漏形态
-  expect_import_diag("[[]]", "J4001") // Array[Array[?]] 形态
-  expect_import_diag("{\"x\":{\"deep\":[]}}", "J4001") // 嵌套孤立空
+test "P1-3/4 防回归 : 空数组中间态不逃逸（strict 档；默认 = Never 占位，#14-2a）" {
+  expect_import_diag("[{\"a\":null},{\"a\":[]}]", "J4001", strict=true) // Array[?]? 泄漏形态
+  expect_import_diag("[[]]", "J4001", strict=true) // Array[Array[?]] 形态
+  expect_import_diag("{\"x\":{\"deep\":[]}}", "J4001", strict=true) // 嵌套孤立空
 }
 
 ///|
@@ -750,4 +754,78 @@ test "D-5 嵌套 enum payload：payload 类型是 enum 名时须 resolve（审�
     @src.build_source(doc2, path="e.json.mbt", expected_name="e"),
     content="{\"case\":\"Tag\",\"v\":7}",
   )
+}
+
+///|
+test "import : 空容器 Never 占位默认产出（#14-2a）——J4001/J4002 不再整张拒" {
+  // 孤立空数组 → Array[Never] + Never 定义 + rc-0 占位 hint + 往返无损
+  let o1 = @src.import_source("{\"exemptions\": []}", path="t.json", stem="t")
+  inspect(o1.content.contains("pub enum Never {}"), content="true")
+  inspect(o1.content.contains("exemptions : Array[Never]"), content="true")
+  inspect(o1.hints.length() >= 1, content="true")
+  inspect(o1.hints[0].render().contains("Array[Never]"), content="true")
+  inspect(
+    @src.build_source(o1.content, path="t.json.mbt"),
+    content="{\"exemptions\":[]}",
+  )
+  // 空对象 → Map[String, Never]
+  let o2 = @src.import_source("{\"cfg\": {}}", path="t.json", stem="t")
+  inspect(o2.content.contains("cfg : Map[String, Never]"), content="true")
+  inspect(
+    @src.build_source(o2.content, path="t.json.mbt"),
+    content="{\"cfg\":{}}",
+  )
+  // 顶层空数组 → pub let t : Array[Never] = []
+  let o3 = @src.import_source("[]", path="t.json", stem="t")
+  inspect(o3.content.contains("pub let t : Array[Never] = []"), content="true")
+  inspect(@src.build_source(o3.content, path="t.json.mbt"), content="[]")
+  // 两级启发优先级保持：同文件他处同名非空字段给出精确类型（D-1 主路径）
+  let o4 = @src.import_source(
+    "{\"list\": [], \"nested\": {\"list\": [1, 2]}}",
+    path="t.json",
+    stem="t",
+  )
+  inspect(o4.content.contains("Array[Int]"), content="true")
+  inspect(o4.content.contains("Never"), content="false")
+  // Never 预留：元素对象首键 never 会派生组名 Never——预留迫其去重（Never2）
+  let o5 = @src.import_source(
+    "{\"items\": [{\"never\": 1}]}",
+    path="t.json",
+    stem="t",
+  )
+  // 无空容器 → 无 Never 定义；预留生效 → 派生名不是 Never（Never2 兜底）
+  inspect(
+    o5.content.split("pub enum Never").length() == 1 &&
+    !o5.content.contains("pub struct Never {"),
+    content="true",
+  )
+  inspect(o5.content.contains("pub struct Never2"), content="true")
+}
+
+///|
+test "import : --strict 恢复空容器拒绝（#14-2a——严格档反向 opt-in）" {
+  let d1 = try {
+    let _ = @src.import_source(
+      "{\"exemptions\": []}",
+      path="t.json",
+      stem="t",
+      strict=true,
+    )
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d1.contains("[J4001]"), content="true")
+  let d2 = try {
+    let _ = @src.import_source(
+      "{\"cfg\": {}}",
+      path="t.json",
+      stem="t",
+      strict=true,
+    )
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d2.contains("[J4002]"), content="true")
 }

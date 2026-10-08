@@ -2,6 +2,8 @@
 package "vitro/jsonmbt/probe/samples"
 
 // Values
+pub let empty_containers : Empty_containers
+
 pub let reserved_keys : Reserved_keys
 
 pub let server : Server
@@ -11,6 +13,12 @@ pub let vitals : Vitals
 // Errors
 
 // Types and methods
+pub struct Empty_containers {
+  as_of : String
+  exemptions : Array[Never]
+  meta : Map[String, Never]
+}
+
 pub struct Id {
   id : String
   where_ : String
@@ -20,6 +28,9 @@ pub struct Id {
 pub struct Inner {
   x : Int
   ratio : Double
+}
+
+pub enum Never {
 }
 
 pub struct Reserved_keys {

@@ -34,6 +34,7 @@ pub(all) enum JCode {
   JHeteroField // J4012 字段跨样本类型不相容
   JBigNum // J4020 超 Int64 整数（D-2 诚实拒绝；字符串化是显式 opt-in）
   JTaggedEnumHint // J4030 疑似 tagged-enum 提示（hint 级，rc 0，建议手写 enum）
+  JNeverHint // J4031 空容器 Never 占位提示（hint 级，rc 0，#14-2a——非空样本后换真类型）
   JDrift // J5001 --check 检测到漂移（rc 2——D-10 有义分叉，diff 族同段扩展）
 }
 
@@ -70,6 +71,7 @@ pub fn JCode::num(self : JCode) -> String {
     JHeteroField => "J4012"
     JBigNum => "J4020"
     JTaggedEnumHint => "J4030"
+    JNeverHint => "J4031"
     JDrift => "J5001"
   }
 }
@@ -80,7 +82,7 @@ pub fn JCode::num(self : JCode) -> String {
 pub fn JCode::exit_code(self : JCode) -> Int {
   match self {
     JUsage | JIO => 4
-    JTaggedEnumHint => 0
+    JTaggedEnumHint | JNeverHint => 0
     JDrift => 2
     _ => 1
   }

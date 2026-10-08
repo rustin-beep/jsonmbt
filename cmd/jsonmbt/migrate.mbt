@@ -103,7 +103,9 @@ fn run_migrate(root_arg : String, write : Bool) -> Int {
   let files : Array[(String, String)] = []
   collect_json_files(root_arg, "", files)
   if files.length() == 0 {
-    print_out("no .json found under '\{root_arg}' (files with an existing .json.mbt twin are skipped)")
+    print_out(
+      "no .json found under '\{root_arg}' (files with an existing .json.mbt twin are skipped)",
+    )
     return 0
   }
   print_out("scanned: \{files.length()} json file(s)\n")
@@ -142,9 +144,14 @@ fn run_migrate(root_arg : String, write : Bool) -> Int {
       }
     }
     // import（taken 传入 → 跨文件前缀化在此发生）
-    let outcome = try {
-      Ok(@src.import_source(raw, path=disp, stem~, taken_names=taken_by_dir[filepath_dir(full)]))
-    } catch {
+    let outcome = Ok(
+      @src.import_source(
+        raw,
+        path=disp,
+        stem~,
+        taken_names=taken_by_dir[filepath_dir(full)],
+      ),
+    ) catch {
       e =>
         if e is @src.Diag(..) {
           Err(e.render())
@@ -166,14 +173,14 @@ fn run_migrate(root_arg : String, write : Bool) -> Int {
       Ok(o) => {
         let content = o.content
         // 降级产物（compact / pretty）与原文件的值树（失败 = 不可比，保守按不等）
-        let built_compact : String? = try {
-          Some(@src.build_source(content, path=disp + ".mbt"))
-        } catch {
+        let built_compact : String? = Some(
+          @src.build_source(content, path=disp + ".mbt"),
+        ) catch {
           _ => None
         }
-        let built_pretty : String? = try {
-          Some(@src.build_source(content, path=disp + ".mbt", pretty=true))
-        } catch {
+        let built_pretty : String? = Some(
+          @src.build_source(content, path=disp + ".mbt", pretty=true),
+        ) catch {
           _ => None
         }
         let value_eq = match (built_compact, parse_for_cmp(raw)) {
@@ -215,7 +222,8 @@ fn run_migrate(root_arg : String, write : Bool) -> Int {
         // #4 前缀化告警：产物含 capitalize(stem)+X 形态 → 指路语义命名
         let prefix_probe = capitalize_cli(stem)
         for name in struct_names_of(content) {
-          if name.length() > prefix_probe.length() && name.has_prefix(prefix_probe) {
+          if name.length() > prefix_probe.length() &&
+            name.has_prefix(prefix_probe) {
             print_out(
               "  note: '\{name}' is a stem-prefixed collision name — consider --type-name-map for a semantic name",
             )
@@ -232,7 +240,10 @@ fn run_migrate(root_arg : String, write : Bool) -> Int {
         }
         // --write：非 reject/diff 落盘
         if write && !kind.has_prefix("DIFF") {
-          atomic_write(full[:full.length() - 5].to_owned() + ".json.mbt", content) catch {
+          atomic_write(
+            full[:full.length() - 5].to_owned() + ".json.mbt",
+            content,
+          ) catch {
             _ => print_out("  error: cannot write '\{disp}.json.mbt'")
           }
         }
@@ -256,9 +267,7 @@ fn run_migrate(root_arg : String, write : Bool) -> Int {
 
 ///|
 fn parse_for_cmp(text : String) -> Json? {
-  try {
-    Some(@src.json_parse(@src.strip_jsonc(text), fname="<cmp>"))
-  } catch {
+  Some(@src.json_parse(@src.strip_jsonc(text), fname="<cmp>")) catch {
     _ => None
   }
 }

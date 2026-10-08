@@ -267,6 +267,11 @@ fn generate_source(
     buf.write_string("// jsonmbt: field-alias \{sname}.\{label} = \"\{key}\"\n")
   }
   buf.write_string("\n")
+  // #14-2a：空容器 Never 底型定义（直接产 fmt 归一形态 `{}`——探针实锚
+  // `{ }` 会被 fmt 收敛，生成器出终态；零构造器 = 免费护栏）
+  if result.uses_never {
+    buf.write_string("pub enum Never {}\n\n")
+  }
   for s in result.structs {
     buf.write_string(render_struct_def(s.0, s.1))
     buf.write_string("\n")

@@ -23,7 +23,9 @@ fn file_exists(p : String) -> Bool {
 
 ///|
 fn dir_exists(p : String) -> Bool {
-  @fs.is_dir(p) catch { _ => false }
+  @fs.is_dir(p) catch {
+    _ => false
+  }
 }
 
 ///|
@@ -118,10 +120,7 @@ fn scan_type_name_clashes(dir : String) -> Array[(String, Array[String])] {
       match name {
         Some(n) =>
           match by_name.get(n) {
-            Some(files) =>
-              if !files.contains(e) {
-                files.push(e)
-              }
+            Some(files) => if !files.contains(e) { files.push(e) }
             None => by_name[n] = [e]
           }
         None => ()
@@ -129,11 +128,7 @@ fn scan_type_name_clashes(dir : String) -> Array[(String, Array[String])] {
     }
   }
   let clashes : Array[(String, Array[String])] = []
-  by_name.each(fn(k, v) {
-    if v.length() > 1 {
-      clashes.push((k, v))
-    }
-  })
+  by_name.each(fn(k, v) { if v.length() > 1 { clashes.push((k, v)) } })
   // 确定性：按类型名排序输出
   clashes.sort_by(fn(a, b) { a.0.compare(b.0) })
   clashes
@@ -184,9 +179,7 @@ fn try_write(path : String, content : String) -> Bool {
 
 ///|
 fn try_read(path : String) -> String? {
-  try {
-    Some(@fs.read_file_to_string(path))
-  } catch {
+  Some(@fs.read_file_to_string(path)) catch {
     _ => None
   }
 }
@@ -242,9 +235,9 @@ fn fmt_shadow_body(
     return ShadowAll("shadow dir error")
   }
   if !try_write(
-    shadow + "/moon.mod",
-    "name = \"jsonmbt/doctor-shadow\"\nversion = \"0.1.0\"\n",
-  ) {
+      shadow + "/moon.mod",
+      "name = \"jsonmbt/doctor-shadow\"\nversion = \"0.1.0\"\n",
+    ) {
     return ShadowAll("shadow dir error")
   }
   if !try_write(shadow + "/moon.pkg", "") {
@@ -290,10 +283,14 @@ fn rm_rf(dir : String) -> Unit {
     if dir_exists(full) {
       rm_rf(full)
     } else {
-      @fs.remove_file(full) catch { _ => () }
+      @fs.remove_file(full) catch {
+        _ => ()
+      }
     }
   }
-  @fs.remove_dir(dir) catch { _ => () }
+  @fs.remove_dir(dir) catch {
+    _ => ()
+  }
 }
 
 ///|
@@ -321,7 +318,10 @@ fn run_doctor(root_arg : String) -> Int {
   // workspace 上下文（诊断信息行，不参与 rc）
   match find_module_root(root_arg) {
     Some((kind, path)) => print_out("workspace: \{kind} at \{path}")
-    None => print_out("workspace: ⚠️ no moon.mod/moon.work found above '\{root_arg}'")
+    None =>
+      print_out(
+        "workspace: ⚠️ no moon.mod/moon.work found above '\{root_arg}'",
+      )
   }
   let files : Array[(String, String, String)] = []
   collect_json_mbt(root_arg, "", files)
@@ -358,7 +358,9 @@ fn run_doctor(root_arg : String) -> Int {
     if file_exists(dir + "/moon.pkg") {
       match find_module_root(dir) {
         Some((kind, path)) =>
-          print_out("  ✅ package boundary — moon.pkg in \{dir} (\{kind} at \{path})")
+          print_out(
+            "  ✅ package boundary — moon.pkg in \{dir} (\{kind} at \{path})",
+          )
         None => {
           print_out(
             "  ⚠️ package boundary — moon.pkg present but no moon.mod/moon.work above '\{dir}' (orphan package)",
@@ -399,11 +401,7 @@ fn run_doctor(root_arg : String) -> Int {
     // ③ check/build（含 D-7 stem 形态归属 J2003；build 纯内存不落盘）。
     // 读取与校验分离捕获：IOError（读不出）与 Diag（校验红）各自成文
     let mut src_ok = false
-    let text_opt = try {
-      Some(@fs.read_file_to_string(full))
-    } catch {
-      _ => None
-    }
+    let text_opt = Some(@fs.read_file_to_string(full)) catch { _ => None }
     match text_opt {
       None => {
         print_out("  ❌ check/build — cannot read '\{full}'")
@@ -431,7 +429,9 @@ fn run_doctor(root_arg : String) -> Int {
     }
     // ④ fmt 稳定（影子包；只读纪律——内容未过 check 的文件该项跳过）
     if !src_ok {
-      print_out("  ⚠️ fmt-stability — skipped (file does not pass check/build)")
+      print_out(
+        "  ⚠️ fmt-stability — skipped (file does not pass check/build)",
+      )
       warned = warned + 1
     } else {
       match shadow_by_dir[dir] {
@@ -443,12 +443,16 @@ fn run_doctor(root_arg : String) -> Int {
           match table.get(disp) {
             Some(true) => print_out("  ✅ fmt-stable")
             _ => {
-              print_out("  ⚠️ fmt-stability — '\{disp}' is not fmt-stable")
+              print_out(
+                "  ⚠️ fmt-stability — '\{disp}' is not fmt-stable",
+              )
               // fix 文案按包边界分叉：moon fmt 只作用于包内文件——目录未接
               // moon.pkg 时 `moon fmt <dir>` 是 rc=0 的静默假成功（实测
               // 2026-10-08），先接包再 fmt 才有效
               if file_exists(dir + "/moon.pkg") {
-                print_out("     fix: run `moon fmt \{dir}` and commit the result")
+                print_out(
+                  "     fix: run `moon fmt \{dir}` and commit the result",
+                )
               } else {
                 print_out(
                   "     fix: add moon.pkg in '\{dir}' first, then run `moon fmt \{dir}` (fmt silently skips non-package dirs)",

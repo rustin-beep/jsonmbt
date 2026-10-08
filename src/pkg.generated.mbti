@@ -12,7 +12,7 @@ pub fn build_value(String, path? : String, expected_name? : String) -> Json rais
 
 pub fn check_source(String, path? : String, expected_name? : String) -> Unit raise Diag
 
-pub fn import_source(String, path? : String, stem~ : String, taken_names? : Array[String], type_name_map? : Map[String, String]) -> ImportOutcome raise Diag
+pub fn import_source(String, path? : String, stem~ : String, taken_names? : Array[String], type_name_map? : Map[String, String], strict? : Bool) -> ImportOutcome raise Diag
 
 pub fn json_parse(String, fname? : String) -> Json raise Diag
 
@@ -73,6 +73,7 @@ pub(all) enum JCode {
   JHeteroField
   JBigNum
   JTaggedEnumHint
+  JNeverHint
   JDrift
 }
 pub fn JCode::exit_code(Self) -> Int

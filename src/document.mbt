@@ -298,7 +298,24 @@ fn scan_supported_type(t : JType, loc : @basic.Location) -> Unit raise Diag {
         ),
         path="",
       )
-    JTOption(t) | JTArray(t) => scan_supported_type(t, loc)
+    JTOption(inner) => {
+      // 嵌套 Option（T??）收窄（#14 批次1）：实测 None 与 Some(None) 都降级
+      // null——静默压平违反 §0 无损与 D-8 ②。三态编码（缺席/null/值）走
+      // §8 评审；此前一律拒（递归口径：任意深度嵌套都在此拦下）
+      if inner is JTOption(_) {
+        raise Diag(
+          code=JBadFieldType,
+          loc~,
+          message="nested Option (T??) is outside the L0 subset — degradation would silently flatten None and Some(None) into the same null",
+          help=Some(
+            "use T? for nullable; the three-state encoding (absent vs null vs value) is under review — model the distinction by hand until then",
+          ),
+          path="",
+        )
+      }
+      scan_supported_type(inner, loc)
+    }
+    JTArray(t) => scan_supported_type(t, loc)
     JTMap(k, v) => {
       scan_supported_type(k, loc)
       scan_supported_type(v, loc)

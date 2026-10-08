@@ -243,3 +243,24 @@ test "P2-6② : Some(v) 内层期望类型校验判别（Int? 字段给 Some(\"x
     src, "jsonmbt: error [J3004] t.json.mbt:6:13 expects Int, got String literal\n  help: change the field type to String, or remove the quotes",
   )
 }
+
+///|
+test "J2007 : 嵌套 Option（T??）收窄——静默压平是无损红线违例（#14-1 批次1）" {
+  // 现状实测：String?? 下 None 与 Some(None) 都降级 "a":null——信息静默
+  // 压平（§0 解压无损 + D-8② 违例）。三态定义（缺席/null/值）走 §8 正式
+  // 评审；在此之前嵌套 Option 一律 J2007 fail loud（递归拒任意深度——
+  // 推断链只加一层 Option，此面纯手写，现存绿文件零影响）
+  // 形态①：直接 T??
+  expect_diag(
+    "struct S {\n  a : String??\n}\npub let t : S = S::{ a: None }\n", "jsonmbt: error [J2007] t.json.mbt:2:3 nested Option (T??) is outside the L0 subset — degradation would silently flatten None and Some(None) into the same null\n  help: use T? for nullable; the three-state encoding (absent vs null vs value) is under review — model the distinction by hand until then",
+  )
+  // 形态②：容器位嵌套（Array 元素类型——JSON 容器位结构上无法缺席，
+  // 三态评审落地前一并收窄）
+  expect_diag(
+    "struct S {\n  b : Array[Int??]\n}\npub let t : S = S::{ b: [] }\n", "jsonmbt: error [J2007] t.json.mbt:2:3 nested Option (T??) is outside the L0 subset — degradation would silently flatten None and Some(None) into the same null\n  help: use T? for nullable; the three-state encoding (absent vs null vs value) is under review — model the distinction by hand until then",
+  )
+  // 形态③：三层（递归口径一次说清）
+  expect_diag(
+    "struct S {\n  c : Int???\n}\npub let t : S = S::{ c: None }\n", "jsonmbt: error [J2007] t.json.mbt:2:3 nested Option (T??) is outside the L0 subset — degradation would silently flatten None and Some(None) into the same null\n  help: use T? for nullable; the three-state encoding (absent vs null vs value) is under review — model the distinction by hand until then",
+  )
+}

@@ -49,7 +49,7 @@ fn usage() -> Int {
     "usage:\n" +
     "  jsonmbt build <file.json.mbt...|-> [-o <out.json>|-]\n" +
     "  jsonmbt check <file.json.mbt...|->\n" +
-    "  jsonmbt import <file.json|-> [-o <out.json.mbt>|-] [--check] [--fmt] [--type-name-map <map.json>]\n" +
+    "  jsonmbt import <file.json|-> [-o <out.json.mbt>|-] [--check] [--fmt] [--type-name-map <map.json>] [--strict]\n" +
     "  jsonmbt doctor [dir] — read-only diagnosis: is this repo's .json.mbt really wired into moon?\n" +
     "  jsonmbt migrate [dir] [--write] — batch scout: byte-eq / value-eq / reject report per .json\n" +
     "degrade: .json.mbt -> .json (deterministic, compact); `-` reads stdin, `-o -` writes to stdout\n" +
@@ -176,7 +176,7 @@ fn load_type_name_map(path : String) -> Map[String, String] raise @src.Diag {
               loc=dummy_loc(),
               message="type-name-map '\{path}': value of '\{k}' must be a string",
               help=Some("format: {\"DerivedName\": \"SemanticName\", ...}"),
-              path=path,
+              path~,
             )
         }
       })
@@ -185,8 +185,10 @@ fn load_type_name_map(path : String) -> Map[String, String] raise @src.Diag {
         code=@src.JBadNameMap,
         loc=dummy_loc(),
         message="type-name-map '\{path}' must be a JSON object of {\"DerivedName\": \"SemanticName\"}",
-        help=Some("run a first import, copy the auto-derived struct names as keys"),
-        path=path,
+        help=Some(
+          "run a first import, copy the auto-derived struct names as keys",
+        ),
+        path~,
       )
   }
   out
@@ -198,7 +200,8 @@ fn run_import(
   out_opt : String?,
   check : Bool,
   fmt : Bool,
-  type_name_map~ : Map[String, String] = Map([]),
+  type_name_map? : Map[String, String] = Map([]),
+  strict? : Bool = false,
 ) -> Int {
   let src = read_input(path) catch {
     e =>
@@ -265,6 +268,7 @@ fn run_import(
     stem~,
     taken_names=taken,
     type_name_map~,
+    strict~,
   ) catch {
     e =>
       if e is @src.Diag(..) {
@@ -526,6 +530,7 @@ fn main_rc() -> Int {
   let mut do_pretty = false
   let mut do_indent : Int? = None // --pretty 缩进宽度（#6-1）；None = 未给（提示判据）
   let mut type_map_path : String? = None // import --type-name-map <file>（#6-4）
+  let mut do_strict = false // import --strict（#14-2a）：空容器严格档（如旧 J4001/J4002 拒）
   let mut i = 2
   while i < args.length() {
     let a = args[i]
@@ -568,9 +573,15 @@ fn main_rc() -> Int {
           )
       }
       i = i + 2
+    } else if a == "--strict" {
+      do_strict = true
+      i = i + 1
     } else if a == "--type-name-map" {
       if i + 1 >= args.length() {
-        return jdiag_exit(@src.JUsage, "--type-name-map requires a file argument")
+        return jdiag_exit(
+          @src.JUsage,
+          "--type-name-map requires a file argument",
+        )
       }
       type_map_path = Some(args[i + 1])
       i = i + 2
@@ -612,22 +623,21 @@ fn main_rc() -> Int {
     // #6-4：--type-name-map 是 import 专属（build/check 侧先拒——下方
     // 共享解析循环收 flag，非 import verb 到达此处即误用）
     let type_map : Map[String, String] = match type_map_path {
-      Some(p) =>
-        try {
-          load_type_name_map(p)
-        } catch {
-          e => return print_diag_exit(e)
-        }
+      Some(p) => load_type_name_map(p) catch { e => return print_diag_exit(e) }
       None => Map([])
     }
-    return run_import(paths[0], out_opt, do_check, do_fmt, type_name_map=type_map)
+    return run_import(
+      paths[0],
+      out_opt,
+      do_check,
+      do_fmt,
+      type_name_map=type_map,
+      strict=do_strict,
+    )
   }
   // import 专属 flag 出现在其他 verb = 误用（fail loud，防静默无效参数）
   if type_map_path is Some(_) {
-    return jdiag_exit(
-      @src.JUsage,
-      "--type-name-map applies to import only",
-    )
+    return jdiag_exit(@src.JUsage, "--type-name-map applies to import only")
   }
   if paths.length() > 1 && out_opt is Some(_) {
     return jdiag_exit(@src.JUsage, "-o accepts a single input")

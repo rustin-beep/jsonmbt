@@ -113,6 +113,7 @@ pub fn import_source(
   stem~ : String,
   taken_names? : Array[String] = [],
   type_name_map? : Map[String, String] = Map([]),
+  strict? : Bool = false,
 ) -> ImportOutcome raise Diag {
   // stem 前置清洗（化石批量实锤："array_address.c" 文件名直接作 stem 产
   // 非法 binding/类型名——曾靠生成保险丝兜底成 internal 错，现正名）
@@ -125,6 +126,7 @@ pub fn import_source(
     fname=path,
     taken=taken_names,
     type_name_map~,
+    strict~,
   )
   let content = generate_source(result, root, stem~, src_name=path)
   // 保险丝（审 P1-1 处方）：产物丢回自家校验器回吃——生成器任何非法输出
@@ -190,11 +192,7 @@ pub fn json_value_eq(a : Json, b : Json) -> Bool {
       let mut ok = true
       xo.each(fn(k, v) {
         match yo.get(k) {
-          Some(w) => {
-            if !json_value_eq(v, w) {
-              ok = false
-            }
-          }
+          Some(w) => if !json_value_eq(v, w) { ok = false }
           None => ok = false
         }
       })

@@ -130,6 +130,8 @@ priv struct InferCtx {
   type_map : Map[String, String] // 派生名 → 用户语义名（--type-name-map，#6-4）
   map_hits : Array[String] // 命中的映射键（首见序——unmatched = 键集 - 命中集）
   map_value_hints : Map[String, String] // 容器路径 → 组名基名（Map 值对象宿主键派生，#6-4）
+  strict : Bool // #14-2a：空容器严格档（--strict）——启发无解时如旧 J4001/J4002 拒
+  mut uses_never : Bool // #14-2a：产物用到 Never 底型（codegen 据此发 enum 定义）
   hints : Array[Diag]
   hint_keys : Array[String] // tagged-enum 提示去重（按键名）
   taken : Array[String] // 同目录已占类型名（跨文件去重——issue #4）
@@ -144,6 +146,7 @@ priv struct InferResult {
   hints : Array[Diag]
   aliases : Array[(String, String, String)] // (struct 名, label, 原始键)——codegen 发射注记用
   map_hits : Array[String] // --type-name-map 命中键集（#6-4）
+  uses_never : Bool // #14-2a：空容器 Never 占位发生（产物含 enum Never 定义）
 }
 
 ///|
@@ -161,17 +164,21 @@ fn infer_shapes(
   fname? : String = "<json>",
   taken? : Array[String] = [],
   type_name_map? : Map[String, String] = Map([]),
+  strict? : Bool = false,
 ) -> InferResult raise Diag {
   let ctx : InferCtx = {
     groups: Map([]),
     group_order: [],
-    used_type_names: [],
+    // #14-2a：Never 预留——{"never":{...}} 的派生名不得占用底型名
+    used_type_names: ["Never"],
     name_cache: Map([]),
     aliases: [],
     map_escape_keys: [],
     type_map: type_name_map,
     map_hits: [],
     map_value_hints: Map([]),
+    strict,
+    uses_never: false,
     hints: [],
     hint_keys: [],
     taken,
@@ -180,7 +187,7 @@ fn infer_shapes(
   }
   // 顶层对象组预命名 capitalize(stem)（config.json → Config——D-7 命名同源）
   prename_top_group(ctx, root)
-  let root_ty = walk_value(ctx, root, path="$")
+  let mut root_ty = walk_value(ctx, root, path="$")
   finalize_empty_root(ctx, root_ty)
   // 组定稿（首见序 = 确定性）
   let structs : Array[(String, Array[(String, JType)])] = []
@@ -222,20 +229,30 @@ fn infer_shapes(
     }
     match resolved {
       Some(t) => patch_empty_array(structs, name, label, t)
-      None => raise empty_arr_diag(ctx, name, label)
+      // #14-2a：启发无线索的「真孤立」空容器默认不再整张拒——残留
+      // JTEmpty 交给收尾统一 Never 占位（--strict 时在收尾如旧 raise）
+      None => ()
     }
   }
-  // 收尾断言（保险丝，审 P1-3/4 处方）：JTEmpty 中间态不得穿过任何容器
-  // 逃逸进产物——残留即 fail loud，绝不生成 Array[?]/Array[?]? 类非法类型
+  // 收尾（#14-2a 统一占位点）：JTEmpty 中间态不得逃逸进产物——strict =
+  // 原保险丝语义（fail loud）；默认 = 递归替换为 Never 底型（对零信息
+  // 容器是数学精确刻画，非猜测占位；输出逐字节不变），D-1 两级启发
+  // 优先级在前（能推精确类型的绝不出 Never）
   for s in structs {
-    for f in s.1 {
+    for i, f in s.1 {
       if has_empty_array(f.1) {
-        raise empty_arr_diag(ctx, s.0, f.0)
+        if ctx.strict {
+          raise empty_arr_diag(ctx, s.0, f.0)
+        }
+        s.1[i] = (f.0, replace_empty_array(f.1, never_ty(ctx)))
       }
     }
   }
   if has_empty_array(root_ty) {
-    raise empty_arr_diag(ctx, "(top level)", "(elements)")
+    if ctx.strict {
+      raise empty_arr_diag(ctx, "(top level)", "(elements)")
+    }
+    root_ty = replace_empty_array(root_ty, never_ty(ctx))
   }
   {
     structs,
@@ -243,6 +260,7 @@ fn infer_shapes(
     hints: ctx.hints,
     aliases: ctx.aliases,
     map_hits: ctx.map_hits,
+    uses_never: ctx.uses_never,
   }
 }
 
@@ -255,6 +273,35 @@ fn has_empty_array(t : JType) -> Bool {
     JTOption(x) | JTArray(x) => has_empty_array(x)
     JTMap(_, v) => has_empty_array(v)
     _ => false
+  }
+}
+
+///|
+/// Never 底型引用（#14-2a）——JTStruct 裸名（build 回吃时经产物自带
+/// enum Never {} 定义 resolve 分化为 JTEnum；零构造器 = 免费护栏：
+/// 元素位写值会被 moon [4014] 与 jsonmbt J3004 双侧拦下）
+fn never_ty(ctx : InferCtx) -> JType {
+  ctx.uses_never = true
+  note_never_hint(ctx)
+  JTStruct("Never")
+}
+
+///|
+/// 占位提示（rc-0，去重一次）：告诉人哪天有非空样本了把 Never 换成真类型
+fn note_never_hint(ctx : InferCtx) -> Unit {
+  if !ctx.hint_keys.contains("never-placeholder") {
+    ctx.hint_keys.push("never-placeholder")
+    ctx.hints.push(
+      Diag(
+        code=JNeverHint,
+        loc=dummy_loc(),
+        message="empty container placeholder: Array[Never] / Map[String, Never] — replace Never with the real element type once a non-empty sample exists (or re-import)",
+        help=Some(
+          "--strict rejects empty containers without clues (pre-0.1 behavior)",
+        ),
+        path=ctx.fname,
+      ),
+    )
   }
 }
 
@@ -283,7 +330,8 @@ fn finalize_empty_root(ctx : InferCtx, root_ty : JType) -> Unit raise Diag {
   if root_ty is JTNullLike {
     raise all_null_diag(ctx, "(top level)")
   }
-  if has_empty_array(root_ty) {
+  if has_empty_array(root_ty) && ctx.strict {
+    // #14-2a：顶层空容器 strict 档如旧拒；默认交收尾统一 Never 占位
     raise empty_arr_diag(ctx, "(top level)", "(elements)")
   }
 }
@@ -431,7 +479,12 @@ fn walk_value(
       let keys : Array[String] = []
       o.each(fn(k, _) { keys.push(k) })
       if keys.length() == 0 {
-        raise empty_obj_diag(ctx) // D-1：空对象单独形态
+        // #14-2a：空对象默认 Map[String, Never] 占位（零信息容器的精确
+        // 刻画）；--strict 如旧 J4002 拒（D-1 终案形态收窄解释见 PLAN §6）
+        if ctx.strict {
+          raise empty_obj_diag(ctx)
+        }
+        return JTMap(JTString, never_ty(ctx))
       }
       register_tagged_enum_hint(ctx, keys, o)
       // 键分流（#13）：保留字类可改名键（where → where_）随 struct 走，
@@ -629,7 +682,11 @@ fn merge_samples(
   }
   let with_opt = if nulls > 0 { JTOption(base) } else { base }
   if !allow_empty_arr && has_empty_array(with_opt) {
-    raise empty_arr_diag(ctx, "(map)", label)
+    // Map 值位空数组：strict 如旧拒；默认穿透 JTEmpty 中间态交给收尾
+    // 统一 Never 占位（has_empty_array 穿透 JTMap——收尾能抓到）
+    if ctx.strict {
+      raise empty_arr_diag(ctx, "(map)", label)
+    }
   }
   with_opt
 }
