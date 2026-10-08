@@ -12,6 +12,8 @@
 #include <fcntl.h>
 #include <io.h>
 #include <windows.h>
+#else
+#include <sys/wait.h>
 #endif
 
 MOONBIT_FFI_EXPORT moonbit_bytes_t jsonmbt_read_stdin(void) {
@@ -102,5 +104,19 @@ MOONBIT_FFI_EXPORT int jsonmbt_run_cmd(moonbit_bytes_t cmd, int32_t len) {
   c[len] = 0;
   int rc = system(c);
   free(c);
+#ifndef _WIN32
+  // Unix system() 返回 wait status（子进程退 1 → 256），须解码出真实
+  // 退出码，否则 J0002 文案展示 rc=256（#12 顺带项）。信号终止 → 128+sig
+  // （shell 惯例）。注：本仓 CI 面 = Windows native，此分支未经 Unix 实测，
+  // Unix 环境首跑须验（AGENTS 纪律 3：禁时点句当现况）。
+  if (rc != -1) {
+    if (WIFEXITED(rc)) {
+      return WEXITSTATUS(rc);
+    }
+    if (WIFSIGNALED(rc)) {
+      return 128 + WTERMSIG(rc);
+    }
+  }
+#endif
   return rc;
 }

@@ -48,8 +48,8 @@ MOON_CC=clang moon build          # 产物在 _build/native/*/build/cmd/jsonmbt/
 CLI 当前动词面（P1）：`build` 与 `check`。
 
 ```bash
-jsonmbt build <file.json.mbt...> [-o <out.json>]   # 降级输出，默认同名 .json
-jsonmbt check <file.json.mbt...>                   # 只校验不产出（= build 的 dry-run）
+jsonmbt build <file.json.mbt...> [-o <out.json>|-] # 降级输出，默认同名 .json；-o - 走 stdout
+jsonmbt check <file.json.mbt...>                   # 只校验不产出（= build 的 dry-run，不含降级链）
 jsonmbt build - < in.json.mbt                      # stdin 进，stdout 出
 ```
 

@@ -5,6 +5,24 @@
 // 校验先行失败零产物（check = build 的 dry-run——同一条校验路径）
 
 ///|
+/// -o -（产物改道 stdout）判定（#12）
+fn is_dash_out(out_opt : String?) -> Bool {
+  match out_opt {
+    Some("-") => true
+    _ => false
+  }
+}
+
+///|
+/// 产物上 stdout：二进制 stub 直写（绕开 println 在 Windows 文本模式的
+/// CRLF 改写——字节契约，issue #1 表亲；#12 起 `-o -` 同走此通道）
+fn write_product_stdout(content : String) -> Unit {
+  let bytes = @unicode.to_utf8_bytes(content)
+  jsonmbt_write_stdout(bytes, bytes.length())
+  jsonmbt_write_stdout(@unicode.to_utf8_bytes("\n"), 1)
+}
+
+///|
 fn write_stderr(s : String) -> Unit {
   // 长度必须是 UTF-8 字节数（s.length() 是码元数——多字节字符按码元数
   // 写入会截尾，issue #1：em-dash 每个多丢 2 字节）
@@ -29,10 +47,10 @@ fn usage() -> Int {
   write_stderr(
     "jsonmbt — typed JSON source files for MoonBit (.json.mbt)\n" +
     "usage:\n" +
-    "  jsonmbt build <file.json.mbt...|-> [-o <out.json>]\n" +
+    "  jsonmbt build <file.json.mbt...|-> [-o <out.json>|-]\n" +
     "  jsonmbt check <file.json.mbt...|->\n" +
-    "  jsonmbt import <file.json|-> [-o <out.json.mbt>] [--check]\n" +
-    "degrade: .json.mbt -> .json (deterministic, compact); `-` reads stdin\n" +
+    "  jsonmbt import <file.json|-> [-o <out.json.mbt>|-] [--check] [--fmt]\n" +
+    "degrade: .json.mbt -> .json (deterministic, compact); `-` reads stdin, `-o -` writes to stdout\n" +
     "ingest: .json/.jsonc -> .json.mbt (shape inference); --check = idempotence gate\n" +
     "rc: 0 ok / 1 input error / 2 drift detected (--check) / 4 usage/IO",
   )
@@ -152,6 +170,13 @@ fn run_import(
   let display = if path == "-" { "<stdin>" } else { path }
   let stem = if path == "-" {
     match out_opt {
+      Some("-") =>
+        // #12：全管道（stdin→stdout）无 stem 来源——绑定名必须等于
+        // 文件 stem（D-7），无文件名即无从推导，fail loud
+        return jdiag_exit(
+          @src.JUsage,
+          "stdin → stdout (-o -) has no file name to derive the binding stem from — import a named file instead",
+        )
       Some(o) =>
         match json_stem_of(o) {
           Some(s) => s
@@ -178,11 +203,20 @@ fn run_import(
   // 审 P1 修正：①排除**输出产物自身**（原只排输入 .json——第二轮 import
   // 把自家上一轮的嵌套 struct 当已占名 → B 级联漂移成 AB → --check 打翻）
   // ②扫描基准 = **输出目录**（-o 跨目录时输入目录的扫描是瞄错的靶）
+  // #12：-o - = 产物上 stdout（纯验证/预览通道，无盘面目标）
+  let dash_out = is_dash_out(out_opt)
   let import_target = match out_opt {
+    Some("-") => "-"
     Some(o) => o
     None => path[:path.length() - ext_len(path)].to_owned() + ".json.mbt"
   }
-  let taken : Array[String] = scan_taken_struct_names(import_target)
+  // taken 扫描基准 = 输出目录（#4）；stdout 产物不进 moon 包、单次输出
+  // 无撞名对象 → 不扫（扫了 cwd 反而引入环境相关的产物差异）
+  let taken : Array[String] = if dash_out {
+    []
+  } else {
+    scan_taken_struct_names(import_target)
+  }
   let outcome = @src.import_source(src, path=display, stem~, taken_names=taken) catch {
     e =>
       if e is @src.Diag(..) {
@@ -199,6 +233,14 @@ fn run_import(
     return jdiag_exit(
       @src.JUsage,
       "--fmt writes to the product file — incompatible with --check (no write side effects)",
+    )
+  }
+  // #12：--check 比对盘面 / --fmt 归一盘面产物——两者都要磁盘目标，
+  // 与 -o -（stdout，无盘面）互斥；fail loud 而非静默忽略
+  if dash_out && (check || fmt) {
+    return jdiag_exit(
+      @src.JUsage,
+      "-o - (stdout) takes no disk product — incompatible with --check (compares disk) and --fmt (formats disk)",
     )
   }
   if check {
@@ -241,9 +283,16 @@ fn run_import(
   }
   // #6-2：import 产物不是 moon fmt 的稳定形态（fmt 会补 ///| 与折行）
   // 接入 moon 静态门禁前须 moon fmt 归一——假绿源（Vitro 批②实锤）
-  write_stderr(
-    "jsonmbt: hint: run `moon fmt \{target}` before wiring moon checks — import output is not fmt-stable yet",
-  )
+  // stdout 通道（#12）无盘面目标，提示里的命令形态无意义 → 静默
+  if not(dash_out) {
+    write_stderr(
+      "jsonmbt: hint: run `moon fmt \{target}` before wiring moon checks — import output is not fmt-stable yet",
+    )
+  }
+  if dash_out {
+    write_product_stdout(outcome.content)
+    return 0
+  }
   atomic_write(target, outcome.content) catch {
     e => if e is @src.Diag(..) { return print_diag_exit(e) } else { return 4 }
   }
@@ -256,9 +305,13 @@ fn run_import(
     let bytes = @unicode.to_utf8_bytes(cmd)
     let rc = jsonmbt_run_cmd(bytes, bytes.length())
     if rc != 0 {
+      // #12：成因区分 = 多因列举 + 引导看透传报错，不按 rc 值语义分支
+      // （cmd 的 errorlevel 编码非契约；moon 的原始报错——如
+      // "not in a Moon project"——经 system() 直通 stderr，用户可见）
       return jdiag_exit(
         @src.JIO,
-        "moon fmt failed (rc=\{rc}) on '\{target}' — is the moon toolchain installed?",
+        "moon fmt failed (rc=\{rc}) on '\{target}' — moon missing from PATH, or the file is outside any moon workspace (see moon's own error above)",
+        help=Some("--fmt failure keeps the unformatted product on disk; gate on rc (4 here), not on the product file"),
       )
     }
   }
@@ -506,20 +559,22 @@ fn run_one(
         return jdiag_exit(@src.JIO, "internal: non-Diag error")
       }
   }
-  // 产物去向：stdin 默认 stdout（-o 可改道文件）；文件默认同名 .json
+  // 产物去向：stdin 默认 stdout（-o 可改道文件）；文件默认同名 .json；
+  // `-o -` 恒改道 stdout（#12：build 链纯验证通道——降级+序列化全链跑到、
+  // 不落盘即验；CI/脚本配 `-o - | md5sum` 或 shell 层丢弃，工具不认识设备名）
   if path == "-" {
     match out_opt {
+      Some("-") => write_product_stdout(product)
       Some(o) =>
         atomic_write(o, product) catch {
           e => if e is Diag(..) { return print_diag_exit(e) } else { return 4 }
         }
-      None => {
-        // 同 import：stdout 产物走二进制 stub（字节契约，issue #1 表亲）
-        let bytes = @unicode.to_utf8_bytes(product)
-        jsonmbt_write_stdout(bytes, bytes.length())
-        jsonmbt_write_stdout(@unicode.to_utf8_bytes("\n"), 1)
-      }
+      None => write_product_stdout(product)
     }
+    return 0
+  }
+  if is_dash_out(out_opt) {
+    write_product_stdout(product)
     return 0
   }
   let target = match out_opt {

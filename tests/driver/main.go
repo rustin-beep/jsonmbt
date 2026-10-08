@@ -368,6 +368,96 @@ func caseCliHints(exe, dir string) error {
 	return nil
 }
 
+// odash-stdout-channel（#12）：-o - 恒走 stdout——证红锚：修复前
+// `build x -o -` 落盘名为 '-' 的文件且 stdout 空。字节契约走二进制
+// 通道（无 CRLF 改写），且不打落盘类 hint。
+func caseOdashStdout(exe, dir string) error {
+	writeFile(dir, "o.json.mbt", "struct S {\n  a : Int\n}\npub let o : S = S::{ a: 1 }\n")
+	rc, out, stderr, err := runExe(exe, dir, "build", "o.json.mbt", "-o", "-")
+	if err != nil {
+		return err
+	}
+	if rc != 0 {
+		return fmt.Errorf("build -o - rc = %d, want 0 (stderr=%q)", rc, stderr)
+	}
+	want := []byte("{\"a\":1}\n")
+	if !bytes.Equal(out, want) {
+		return fmt.Errorf("stdout 逐字节不符: want %q got %q", want, out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "-")); err == nil {
+		return fmt.Errorf("不应落盘名为 '-' 的文件（#12 修复前行为）")
+	}
+	if strings.Contains(string(stderr), "hint:") {
+		return fmt.Errorf("stdout 通道不应打落盘类 hint, got %q", stderr)
+	}
+	// import 对称：-o - 出 .mbt 文本，不落盘
+	writeFile(dir, "p.json", "{\"k\": 1}\n")
+	rc, out, stderr, err = runExe(exe, dir, "import", "p.json", "-o", "-")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("import -o - rc=%d err=%v stderr=%q", rc, err, stderr)
+	}
+	if !bytes.Contains(out, []byte("pub let p")) {
+		return fmt.Errorf("import -o - stdout 应含产物绑定 pub let p, got %q", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "p.json.mbt")); err == nil {
+		return fmt.Errorf("import -o - 不应落盘 p.json.mbt")
+	}
+	return nil
+}
+
+// odash-exclusive（#12）：-o - 与 --check/--fmt 互斥（盘面语义无目标）、
+// stdin→stdout 无 stem 来源——全部 J0001 rc 4 fail loud。
+func caseOdashExclusive(exe, dir string) error {
+	writeFile(dir, "q.json", "{\"k\": 1}\n")
+	for _, args := range [][]string{
+		{"import", "q.json", "-o", "-", "--check"},
+		{"import", "q.json", "-o", "-", "--fmt"},
+	} {
+		rc, _, stderr, err := runExe(exe, dir, args...)
+		if err != nil {
+			return err
+		}
+		if rc != 4 {
+			return fmt.Errorf("args=%v rc = %d, want 4", args, rc)
+		}
+		if !bytes.Contains(stderr, []byte("[J0001]")) {
+			return fmt.Errorf("args=%v 应报 J0001, got %q", args, stderr)
+		}
+	}
+	rc, _, stderr, err := runExeWithStdin(exe, dir, "{\"k\":1}", "import", "-", "-o", "-")
+	if err != nil {
+		return err
+	}
+	if rc != 4 || !bytes.Contains(stderr, []byte("[J0001]")) {
+		return fmt.Errorf("stdin→stdout 应 J0001 rc4, got rc=%d stderr=%q", rc, stderr)
+	}
+	return nil
+}
+
+// fmt-fail-j0002（#12）：moon fmt 失败 → rc=4 + 成因多因列举文案 + help
+// 行声明半成功态 + 未 fmt 产物保留。driver 临时目录在仓外系统 Temp：
+// moon 在场则 fmt 报 not-in-workspace（真·盲区），moon 缺席则 spawn 失败
+// ——两种成因都必须走同一 J0002 出口（断言成因不敏感）。
+func caseFmtFailJ0002(exe, dir string) error {
+	writeFile(dir, "f.json", "{\"k\": 1}\n")
+	rc, _, stderr, err := runExe(exe, dir, "import", "f.json", "--fmt", "-o", "f.json.mbt")
+	if err != nil {
+		return err
+	}
+	if rc != 4 {
+		return fmt.Errorf("fmt 失败 rc = %d, want 4（rc 契约——#12 实测 4，正文误报 0）", rc)
+	}
+	for _, frag := range []string{"[J0002]", "outside any moon workspace", "help:"} {
+		if !bytes.Contains(stderr, []byte(frag)) {
+			return fmt.Errorf("stderr 应含 %q（多因文案/help 半成功态声明）, got %q", frag, stderr)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "f.json.mbt")); err != nil {
+		return fmt.Errorf("fmt 失败后未 fmt 产物应保留（半成功态契约）: %v", err)
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"probe-samples-golden", caseProbeSamples},
@@ -378,6 +468,9 @@ var cases = []testCase{
 	{"pretty-key-order", casePrettyKeyOrder},
 	{"stderr-line-contract", caseStderrLineContract},
 	{"cli-hints", caseCliHints},
+	{"odash-stdout-channel", caseOdashStdout},
+	{"odash-exclusive", caseOdashExclusive},
+	{"fmt-fail-j0002", caseFmtFailJ0002},
 }
 
 func defaultExe() string {
