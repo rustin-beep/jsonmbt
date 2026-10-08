@@ -1,6 +1,9 @@
 // MoonBit 字符串字面量解码器（探针实测：Constant::String 的 raw 未解码——
 // 转义序列原样保留在源文本里；值树必须存解码值，输出侧由 stringify 统一转义）
-// 转义集（MoonBit 语言面）：\' \" \\ \n \r \t \b \f \0 \xHH \u{1..6 位十六进制}
+// 转义集（#16 实测对齐 moon 词法宽集）：\' \" \\ \/ \n \r \t \b \f \0
+// \xHH \u{1..6 位十六进制} \uXXXX（定长，含 \uD8xx\uDCxx 代理对合成——
+// moon check 对上述全族 rc=0，「.json.mbt = 合法 MoonBit 源文件」承诺
+// 要求 jsonmbt 接受 moon 接受的一切）
 
 ///|
 fn unescape_string(raw : String, loc : @basic.Location) -> String raise Diag {
@@ -19,12 +22,13 @@ fn unescape_string(raw : String, loc : @basic.Location) -> String raise Diag {
         '\'' => buf.write_char('\'')
         '"' => buf.write_char('"')
         '\\' => buf.write_char('\\')
+        '/' => buf.write_char('/') // JSON 惯用 \/ —— moon 词法接受（#16 探针）
         'n' => buf.write_char('\n')
         'r' => buf.write_char('\r')
         't' => buf.write_char('\t')
         'b' => buf.write_char('\b')
         'f' => buf.write_char('\f')
-        '0' => buf.write_char('\u0000')
+        '0' => buf.write_char('\u{0}')
         'x' => {
           // \xHH：恰好两位十六进制
           if i + 2 >= n {
@@ -38,36 +42,68 @@ fn unescape_string(raw : String, loc : @basic.Location) -> String raise Diag {
             None => raise malformed_string(raw, loc)
           }
         }
-        'u' => {
-          // \u{...}：花括号内 1..6 位十六进制（MoonBit 无 \uXXXX 定长形态）
-          if i + 1 >= n || view[i + 1] != '{' {
-            raise malformed_string(raw, loc)
-          }
-          let mut j = i + 2
-          let mut acc : UInt = 0U
-          let mut digits = 0
-          let mut closed = false
-          while j < n {
-            let c = view[j]
-            if c == '}' {
-              closed = true
-              break
-            }
-            match hex_digit(c) {
-              Some(d) => {
-                acc = acc * 16U + d.reinterpret_as_uint()
-                digits = digits + 1
-                j = j + 1
+        'u' =>
+          // \u{...}：花括号内 1..6 位十六进制（MoonBit 文档形态）
+          if i + 1 < n && view[i + 1] == '{' {
+            let mut j = i + 2
+            let mut acc : UInt = 0U
+            let mut digits = 0
+            let mut closed = false
+            while j < n {
+              let c = view[j]
+              if c == '}' {
+                closed = true
+                break
               }
+              match hex_digit(c) {
+                Some(d) => {
+                  acc = acc * 16U + d.reinterpret_as_uint()
+                  digits = digits + 1
+                  j = j + 1
+                }
+                None => raise malformed_string(raw, loc)
+              }
+            }
+            if !closed || digits == 0 || digits > 6 || acc > 0x10FFFFU {
+              raise malformed_string(raw, loc)
+            }
+            buf.write_char(acc.reinterpret_as_int().unsafe_to_char())
+            i = j
+          } else {
+            // \uXXXX 定长 4 位（moon 词法接受——#16 探针；JSON 惯用形态）。
+            // 代理对 \uD8xx\uDCxx 合成为单码点（UTF-16 语义）；孤立代理拒
+            if i + 4 >= n {
+              raise malformed_string(raw, loc)
+            }
+            let cp = match
+              four_hex(view[i + 1], view[i + 2], view[i + 3], view[i + 4]) {
+              Some(v) => v
               None => raise malformed_string(raw, loc)
             }
+            i = i + 4
+            if cp >= 0xD800 && cp <= 0xDBFF {
+              // 高代理：必须紧跟 \uXXXX 低位代理
+              if i + 6 >= n || view[i + 1] != '\\' || view[i + 2] != 'u' {
+                raise malformed_string(raw, loc)
+              }
+              let lo = match
+                four_hex(view[i + 3], view[i + 4], view[i + 5], view[i + 6]) {
+                Some(v) => v
+                None => raise malformed_string(raw, loc)
+              }
+              if lo < 0xDC00 || lo > 0xDFFF {
+                raise malformed_string(raw, loc)
+              }
+              let combined = 0x10000 + (cp - 0xD800) * 0x400 + (lo - 0xDC00)
+              buf.write_char(combined.unsafe_to_char())
+              i = i + 6
+            } else if cp >= 0xDC00 && cp <= 0xDFFF {
+              // 孤立低代理：病态
+              raise malformed_string(raw, loc)
+            } else {
+              buf.write_char(cp.unsafe_to_char())
+            }
           }
-          if !closed || digits == 0 || digits > 6 || acc > 0x10FFFFU {
-            raise malformed_string(raw, loc)
-          }
-          buf.write_char(acc.reinterpret_as_int().unsafe_to_char())
-          i = j
-        }
         _ => raise malformed_string(raw, loc)
       }
       i = i + 1
@@ -77,6 +113,15 @@ fn unescape_string(raw : String, loc : @basic.Location) -> String raise Diag {
     }
   }
   buf.to_string()
+}
+
+///|
+fn four_hex(a : Char, b : Char, c : Char, d : Char) -> Int? {
+  match (hex_digit(a), hex_digit(b), hex_digit(c), hex_digit(d)) {
+    (Some(w), Some(x), Some(y), Some(z)) =>
+      Some(w * 4096 + x * 256 + y * 16 + z)
+    _ => None
+  }
 }
 
 ///|

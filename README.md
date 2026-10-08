@@ -10,7 +10,7 @@
 
 # jsonmbt
 
-**`.json.mbt` 是 JSON 的类型化源码形态**——以 MoonBit 子集书写的 JSON 数据：`struct` 头即 schema，值体即数据，经 jsonmbt 引擎**确定性降级**输出干净、紧凑的 `.json`。
+**`.json.mbt` 是 JSON 的类型化源码形态**——以 MoonBit 子集书写的 JSON 数据：`struct` 头即 schema，值体即数据，经 jsonmbt 引擎**确定性降级**输出干净、紧凑的 `.json`。完整语法参考（与 MoonBit 的逐面对应：类型头全集 / 值体全集 / 转义与数字契约 / 键名两通道 / 空容器占位）见**可执行手册 [`src/manual.mbt.md`](src/manual.mbt.md)**——代码块即 `moon test` 锚，示例永不腐烂。
 
 TS→JS 的关系，在 JSON 世界的复刻：类型留在源文件里持续生效，产物是人人可读的标准 JSON。
 
@@ -40,6 +40,8 @@ $ jsonmbt build examples/server.json.mbt
 
 - **类型即 schema，零新语法**：`.json.mbt` 是合法 MoonBit 源文件——`moon check` 编译期验证字段类型与必填性，错误信息 IDE 级（行列指向）；重复键结构性不可能；注释与尾逗号天然合法。`moon fmt` 直接统一格式。
 - **确定性降级**：同一输入永远得到逐字节相同的输出。build 校验先行，失败零产物。
+- **数字降级契约**（[#17](https://github.com/rustin-beep/jsonmbt/issues/17)）：整数族（`Int`/`Int64`）走**解析值归一**——`-0` → `0`、`0x10` → `16`（进制归一）、Int64 全精度文本保留；`Double` 保**源拼写透传**（`1.50` 原样、不归一为 `1.5`——避免解析-再格式化的精度伪影）。含义：数字拼写属源文本的一部分——按字节指纹锚定的下游请保持拼写稳定（机器生成源天然满足）。
+- **字符串转义契约**（[#16](https://github.com/rustin-beep/jsonmbt/issues/16)）：`.json.mbt` 侧接受 MoonBit 词法接受的一切（`\'  \"  \\  \/  \n  \r  \t  \b  \f  \0  \xHH  \u{...}  \uXXXX`，含 `\uD8xx\uDCxx` 代理对合成——moon 实测全接受）；降级输出用最小转义集（控制符/引号/反斜杠）+ **非 ASCII 裸 UTF-8**（无 `\uXXXX` 噪音）——同值异形输入产同一输出规范形。
 - **`Option` 即可空**：`Int?` ↔ JSON `null`，可空性写进类型头，读的人不用猜。
 - **工具链零维护税**：fmt / check / IDE 支持全部继承 moon 全家桶，jsonmbt 只做「校验 + 降级」这一件事。
 

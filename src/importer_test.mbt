@@ -857,10 +857,7 @@ test "fill : 空容器按声明类型直填 + 头逐字节保留（#14-2b）" {
     path="cfg.json.mbt",
     stem="cfg",
   )
-  inspect(
-    filled2.contains("list: [\"a\"]"),
-    content="true",
-  )
+  inspect(filled2.contains("list: [\"a\"]"), content="true")
   inspect(
     @src.build_source(filled2, path="cfg.json.mbt", expected_name="cfg"),
     content="{\"list\":[\"a\"]}",
@@ -955,4 +952,23 @@ test "fill : 消歧失败 fail loud + 多余键拒（#14-2b）" {
     e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
   }
   inspect(d2.contains("[J3005]"), content="true")
+}
+
+///|
+test "import : 含转义 JSON 往返无损（#16——真实世界的换行/引号/u 转义形态）" {
+  // JSON 侧（RFC 8259）转义 → 解码值 → moonbit_escape 产 MoonBit 形态
+  // → build 回吃（宽集）→ JSON 再生。字符串内容用 \u{} 形态构造
+  // （moon 对字面量代理对语法发 deprecation 警告——内容不含警告面）
+  let json = "{\"text\": \"a\\tb\\nc\\\"d\\\\e\\/f" +
+    "\u{5c}u4e2d" +
+    "\u{5c}ud83d\u{5c}ude80g\"}"
+  let out = do_import(json)
+  let built = @src.build_source(out, path="t.json.mbt")
+  // 值语义等价（键序同、解码值同）
+  let lhs = @src.json_parse(json, fname="a")
+  let rhs = @src.json_parse(built, fname="b")
+  inspect(@src.json_value_eq(lhs, rhs), content="true")
+  // 输出规范形态：控制符/引号/反斜杠保 JSON 转义，非 ASCII 裸 UTF-8
+  //（\u4e2d → 中、代理对 → 🚀——「无 \uXXXX 噪音」既定策略）
+  inspect(built, content="{\"text\":\"a\\tb\\nc\\\"d\\\\e/f中🚀g\"}")
 }

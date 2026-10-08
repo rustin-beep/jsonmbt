@@ -264,3 +264,55 @@ test "J2007 : 嵌套 Option（T??）收窄——静默压平是无损红线违�
     "struct S {\n  c : Int???\n}\npub let t : S = S::{ c: None }\n", "jsonmbt: error [J2007] t.json.mbt:2:3 nested Option (T??) is outside the L0 subset — degradation would silently flatten None and Some(None) into the same null\n  help: use T? for nullable; the three-state encoding (absent vs null vs value) is under review — model the distinction by hand until then",
   )
 }
+
+///|
+test "unescape : MoonBit 词法宽集对齐——斜杠转义与 uXXXX 定长（#16）" {
+  // moon 实测接受 \/ 与 \uXXXX（moon check rc=0，2026-10-09 探针）——
+  // 「.json.mbt = 合法 MoonBit 源文件」承诺要求 jsonmbt 接受 moon 接受的一切
+  // （#16 主表的 \t \n \" \ \b \f \r 七项在最新 exe 已工作——本锚
+  // 补真缺口三项 + 全族回归）
+  let good =
+    #|struct T { s : String }
+    #|pub let t : T = T::{ s: "a\/b 中\u4e2d \ud83d\ude80 \t\n\"\b\f\r\\" }
+  inspect(
+    @src.build_source(good, path="t.json.mbt", expected_name="t"),
+    content="{\"s\":\"a/b 中中 🚀 \\t\\n\\\"\\b\\f\\r\\\\\"}",
+  )
+  // 孤立高代理（无低位跟随）→ 病态输入拒收
+  let bad =
+    #|struct T { s : String }
+    #|pub let t : T = T::{ s: "\ud83d" }
+  let d = try {
+    let _ = @src.build_source(bad, path="t.json.mbt", expected_name="t")
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d.contains("[J3003]"), content="true")
+}
+
+///|
+test "数字降级规范化契约锚（#17 方案 C 成文）——Int 系解析值 / Double 源拼写" {
+  let doc =
+    #|struct N {
+    #|  a : Int
+    #|  b : Double
+    #|  c : Int
+    #|  d : Int64
+    #|  e : Double
+    #|}
+    #|
+    #|pub let n : N = N::{
+    #|  a: -0,
+    #|  b: 1.50,
+    #|  c: 0x10,
+    #|  d: 9223372036854775807,
+    #|  e: 0.1,
+    #|}
+  // 契约（README 同文）：整数族走解析值归一（负零塌缩 / 进制归一）；
+  // Double 保源拼写（避免解析-再格式化的精度伪影）；Int64 全精度文本保留
+  inspect(
+    @src.build_source(doc, path="n.json.mbt", expected_name="n"),
+    content="{\"a\":0,\"b\":1.50,\"c\":16,\"d\":9223372036854775807,\"e\":0.1}",
+  )
+}
