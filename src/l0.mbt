@@ -629,7 +629,16 @@ fn l0_record(
   let obj : Map[String, Json] = Map([])
   for f in fields {
     let label = f.label.name
-    if obj.contains(label) {
+    // field-alias（#13）：struct 侧字段名 → 原始 JSON 键（注记承载；缺省恒等）
+    let key = match sd {
+      Some(d) =>
+        match d.aliases.get(label) {
+          Some(k) => k
+          None => label
+        }
+      None => label
+    }
+    if obj.contains(key) {
       raise Diag(
         code=JDupField,
         loc=f.label.loc,
@@ -655,13 +664,17 @@ fn l0_record(
         }
       None => None
     }
-    obj[label] = l0_expr(env, enums, f.expr, fty, depth + 1)
+    obj[key] = l0_expr(env, enums, f.expr, fty, depth + 1)
   }
   // 缺字段：record 字面量必须给全字段（Option 字段写 None——D-5 v1 先拒对齐）
   match sd {
     Some(d) =>
       for f in d.fields {
-        if !obj.contains(f.0) {
+        let implied = match d.aliases.get(f.0) {
+          Some(k) => k
+          None => f.0
+        }
+        if !obj.contains(implied) {
           raise Diag(
             code=JMissingField,
             loc~,

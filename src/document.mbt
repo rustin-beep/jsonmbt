@@ -24,6 +24,158 @@ fn syntax_diag(r : @basic.Report, path : String) -> Diag {
 }
 
 ///|
+const FIELD_ALIAS_PREFIX : String = "// jsonmbt: field-alias "
+
+///|
+/// 行号定位（field-alias 注记诊断用——注记在注释里，parser 看不见）
+fn marker_loc(path : String, lnum : Int) -> @basic.Location {
+  {
+    start: { fname: path, lnum, bol: 0, cnum: 0, },
+    end: { fname: path, lnum, bol: 0, cnum: 0, },
+  }
+}
+
+///|
+/// field-alias 注记预扫描（#13）：moon 解析器剥注释，注记必须在原始源文本
+/// 上收。严格行文法：`// jsonmbt: field-alias <Struct>.<label> = "<json键>"`
+/// （合法 MoonBit 注释——fmt 幂等，探针实锚；畸形行 J3009 fail loud 不猜）
+fn scan_field_aliases(
+  src : String,
+  path : String,
+) -> Array[(String, String, String, Int)] raise Diag {
+  let out : Array[(String, String, String, Int)] = []
+  let mut lnum = 0
+  for raw_line in src.split("\n") {
+    lnum = lnum + 1
+    // 行首空白跳过 + 行尾 \r 剥离（CRLF 源）
+    let v = raw_line[:]
+    let n = v.length()
+    let mut s = 0
+    while s < n && (v[s] == ' ' || v[s] == '\t') {
+      s = s + 1
+    }
+    let mut e = n
+    if e > s && v[e - 1] == '\r' {
+      e = e - 1
+    }
+    let t = v[s:e]
+    if !t.has_prefix("// jsonmbt: field-alias") {
+      continue
+    }
+    let bad = fn(msg : String) -> Diag {
+      Diag(
+        code=JBadAlias,
+        loc=marker_loc(path, lnum),
+        message="malformed field-alias marker (want '\{FIELD_ALIAS_PREFIX}<Struct>.<label> = \"<json-key>\"'): \{msg}",
+        help=Some(
+          "example: // jsonmbt: field-alias Rule.where_ = \"where\" — one marker per line, at the top of the file",
+        ),
+        path~,
+      )
+    }
+    if !t.has_prefix(FIELD_ALIAS_PREFIX) {
+      raise bad("stray text inside the marker prefix")
+    }
+    let rest = t[FIELD_ALIAS_PREFIX.length():]
+    let eq = rest.find(" = ")
+    let (left, right) = match eq {
+      Some(i) => (rest[:i].to_owned(), rest[i + 3:])
+      None => raise bad("missing ' = '")
+    }
+    let dot = left.find(".")
+    let (sname, label) = match dot {
+      Some(i) => (left[:i].to_owned(), left[i + 1:].to_owned())
+      None => raise bad("want <Struct>.<label>")
+    }
+    if sname == "" || label == "" || left[dot.unwrap() + 1:].contains(".") {
+      raise bad("want exactly one '.' in <Struct>.<label>")
+    }
+    if right.length() < 2 || right[0] != '"' || right[right.length() - 1] != '"' {
+      raise bad("json key must be a double-quoted string")
+    }
+    let key = right[1:right.length() - 1].to_owned()
+    if key == "" || key.contains("\"") {
+      raise bad("json key must be non-empty and quote-free")
+    }
+    out.push((sname, label, key, lnum))
+  }
+  out
+}
+
+///|
+/// 注记语义校验 + 附着到 struct 表（#13）：struct/字段须存在、恒等注记拒收、
+/// 隐含 JSON 键集须无碰撞——防手滑，fail loud
+fn attach_field_aliases(
+  structs : Map[String, StructDef],
+  marks : Array[(String, String, String, Int)],
+  path : String,
+) -> Unit raise Diag {
+  for m in marks {
+    let (sname, label, key, lnum) = m
+    let d = match structs.get(sname) {
+      Some(d) => d
+      None =>
+        raise Diag(
+          code=JBadAlias,
+          loc=marker_loc(path, lnum),
+          message="field-alias names struct '\{sname}' which is not defined in this file",
+          help=Some("declare the struct, or fix the name in the marker"),
+          path~,
+        )
+    }
+    let has_field = d.fields.iter().find_first(fn(f) { f.0 == label })
+      is Some(_)
+    if !has_field {
+      raise Diag(
+        code=JBadAlias,
+        loc=marker_loc(path, lnum),
+        message="field-alias names field '\{label}' which struct '\{sname}' does not have",
+        help=Some("struct '\{sname}' has fields: \{field_names(d)}"),
+        path~,
+      )
+    }
+    if key == label {
+      raise Diag(
+        code=JBadAlias,
+        loc=marker_loc(path, lnum),
+        message="identity field-alias ('\{label}' = \"\{key}\") — remove the marker",
+        help=Some(
+          "markers are only for fields whose JSON key differs from the label",
+        ),
+        path~,
+      )
+    }
+    if d.aliases.contains(label) {
+      raise Diag(
+        code=JBadAlias,
+        loc=marker_loc(path, lnum),
+        message="duplicate field-alias for '\{sname}.\{label}'",
+        help=Some("keep exactly one marker per field"),
+        path~,
+      )
+    }
+    for f in d.fields {
+      if f.0 != label {
+        let implied = match d.aliases.get(f.0) {
+          Some(k) => k
+          None => f.0
+        }
+        if implied == key {
+          raise Diag(
+            code=JBadAlias,
+            loc=marker_loc(path, lnum),
+            message="two fields of '\{sname}' map to the same JSON key \"\{key}\"",
+            help=Some("each field must degrade to a distinct JSON key"),
+            path~,
+          )
+        }
+      }
+    }
+    d.aliases[label] = key
+  }
+}
+
+///|
 fn analyze(
   src : String,
   path? : String = "",
@@ -33,9 +185,12 @@ fn analyze(
   if reports.length() > 0 {
     raise syntax_diag(reports[0], path)
   }
+  // field-alias 注记（#13）：预扫描（注释层——parser 剥掉）+ 语义校验附着
+  let alias_marks = scan_field_aliases(src, path)
   // 顶层白名单：struct 定义 + 恰好一个 pub let（D-7；其余顶层 = J2005，
   // L2 落地时再放内部 let）
   let tyenv = collect_tyenv(impls)
+  attach_field_aliases(tyenv.structs, alias_marks, path)
   let structs = tyenv.structs
   let mut root_opt : @syntax.Impl? = None
   for i in impls {

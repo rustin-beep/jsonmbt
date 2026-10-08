@@ -311,7 +311,9 @@ fn run_import(
       return jdiag_exit(
         @src.JIO,
         "moon fmt failed (rc=\{rc}) on '\{target}' — moon missing from PATH, or the file is outside any moon workspace (see moon's own error above)",
-        help=Some("--fmt failure keeps the unformatted product on disk; gate on rc (4 here), not on the product file"),
+        help=Some(
+          "--fmt failure keeps the unformatted product on disk; gate on rc (4 here), not on the product file",
+        ),
       )
     }
   }

@@ -44,6 +44,7 @@ fn JType::show(self : JType) -> String {
 priv struct StructDef {
   name : String
   fields : Array[(String, JType, @basic.Location)] // (label, 类型, 字段位置)
+  aliases : Map[String, String] // label → 原始 JSON 键（#13 field-alias 注记；默认空 = 恒等）
 }
 
 ///|
@@ -91,7 +92,7 @@ fn collect_tyenv(impls : @list.List[@syntax.Impl]) -> TypeEnv raise Diag {
             for f in fields {
               fs.push((f.name.label, parse_type(f.ty), f.loc))
             }
-            structs[name] = { name, fields: fs, }
+            structs[name] = { name, fields: fs, aliases: Map([]), }
           }
           Variant(ctors) => {
             // enum：无参构造器收进变体表；带参（ConsDecl.args 非空）拒收该变体

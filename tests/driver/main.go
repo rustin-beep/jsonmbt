@@ -458,6 +458,111 @@ func caseFmtFailJ0002(exe, dir string) error {
 	return nil
 }
 
+// reserved-field-roundtrip：#13 红→绿锚。保留字字段名 where + 异类型兄弟
+// 字段：修复前 import 整对象退 Map、值统一失败 → 误导性 J4011 rc 1；
+// 修复后 struct 照出（where 改名 where_ + field-alias 注记），build 按注记
+// 还原 JSON 键，整链字节等价。
+func caseReservedFieldRoundtrip(exe, dir string) error {
+	json := `{"a": [{"where": "x", "b": ["t"]}]}`
+	writeFile(dir, "w.json", json)
+	rc, _, _, err := runExe(exe, dir, "import", "w.json", "-o", "w.json.mbt")
+	if err != nil {
+		return err
+	}
+	if rc != 0 {
+		return fmt.Errorf("import rc = %d, want 0 (#13 修复前为 J4011 rc 1)", rc)
+	}
+	prod, err := os.ReadFile(filepath.Join(dir, "w.json.mbt"))
+	if err != nil {
+		return err
+	}
+	for _, want := range []string{
+		"// jsonmbt: field-alias Where.where_ = \"where\"",
+		"where_ : String",
+		"Where::{ where_: \"x\", b: [\"t\"] }",
+	} {
+		if !strings.Contains(string(prod), want) {
+			return fmt.Errorf("产物缺 %q:\n%s", want, prod)
+		}
+	}
+	// build 就地写同名 .json：键按注记还原（where_ → where），紧凑字节等价
+	if rc, _, _, err := runExe(exe, dir, "build", "w.json.mbt"); err != nil || rc != 0 {
+		return fmt.Errorf("build rc=%d err=%v", rc, err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "w.json"))
+	if err != nil {
+		return err
+	}
+	want := []byte(`{"a":[{"where":"x","b":["t"]}]}`)
+	if !bytes.Equal(bytes.TrimRight(got, "\r\n"), want) {
+		return fmt.Errorf("round-trip 键还原失败\n--want--\n%q\n--got--\n%q", want, got)
+	}
+	return nil
+}
+
+// j4010-container-grouping：#14-3 红→绿锚。顶层 doc/嵌套 schema 单样本
+// 不再与数组元素键集混计——报告按容器路径分组（golden 逐字节）。
+func caseJ4010ContainerGrouping(exe, dir string) error {
+	writeFile(dir, "e.json",
+		`{"doc": {"schema": 1}, "entries": [{"a": 1, "b": 2}, {"a": 1, "c": 3}]}`)
+	rc, _, stderr, err := runExe(exe, dir, "import", "e.json", "-o", "e.json.mbt")
+	if err != nil {
+		return err
+	}
+	if rc != 1 {
+		return fmt.Errorf("rc = %d, want 1", rc)
+	}
+	want := []byte("jsonmbt: error [J4010] e.json:1:1 incompatible object shapes across samples (D-5 key-set drift): at $.entries[]: 2 distinct key sets in 2 samples: ×1 { a, b }; ×1 { a, c }\n" +
+		"  help: key-set drift is not auto-converted — hand-model each key set as an enum variant (D-5), or make the samples uniform\n")
+	if !bytes.Equal(stderr, want) {
+		return fmt.Errorf("stderr 逐字节不符（#14-3 分组文案）：\n--want--\n%q\n--got--\n%q", want, stderr)
+	}
+	return nil
+}
+
+// j4011-map-escape-cause：#13 文案红→绿锚。不可改名键（点号）走 Map 逃生门
+// 失败时须点名键因（修复前报跨样本类型冲突的误导文案）。
+func caseJ4011MapEscapeCause(exe, dir string) error {
+	writeFile(dir, "d.json", `{"a.b": "x", "c": ["t"]}`)
+	rc, _, stderr, err := runExe(exe, dir, "import", "d.json", "-o", "d.json.mbt")
+	if err != nil {
+		return err
+	}
+	if rc != 1 {
+		return fmt.Errorf("rc = %d, want 1", rc)
+	}
+	want := []byte("jsonmbt: error [J4011] d.json:1:1 cannot unify values under keys that are not legal MoonBit field labels ('a.b'): String vs Array[String]\n" +
+		"  help: these keys force Map degradation (heterogeneous values cannot unify) — rename the keys in the JSON, or hand-write a struct\n")
+	if !bytes.Equal(stderr, want) {
+		return fmt.Errorf("stderr 逐字节不符（#13 键因文案）：\n--want--\n%q\n--got--\n%q", want, stderr)
+	}
+	return nil
+}
+
+// j3009-alias-gate：field-alias 注记的门禁锚。合法注记 → build 还原键；
+// 指向不存在字段的注记 → J3009（fail loud，不静默忽略）。
+func caseJ3009AliasGate(exe, dir string) error {
+	ok := "// jsonmbt: field-alias Rule.where_ = \"where\"\n" +
+		"struct Rule {\n  where_ : String\n}\n" +
+		"pub let r : Rule = Rule::{ where_: \"x\" }\n"
+	rc, out, _, err := runExeWithStdin(exe, dir, ok, "build", "-")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("build rc=%d err=%v", rc, err)
+	}
+	if want := []byte(`{"where":"x"}`); !bytes.Equal(bytes.TrimRight(out, "\r\n"), want) {
+		return fmt.Errorf("alias 键还原失败\n--want--\n%q\n--got--\n%q", want, out)
+	}
+	bad := strings.Replace(ok, "Rule.where_", "Rule.nope_", 1)
+	rc, _, stderr, err := runExeWithStdin(exe, dir, bad, "check", "-")
+	if err != nil {
+		return err
+	}
+	if rc != 1 || !bytes.Contains(stderr, []byte("[J3009]")) {
+		return fmt.Errorf("J3009 门禁未红：rc=%d stderr=%q", rc, stderr)
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"probe-samples-golden", caseProbeSamples},
@@ -471,6 +576,10 @@ var cases = []testCase{
 	{"odash-stdout-channel", caseOdashStdout},
 	{"odash-exclusive", caseOdashExclusive},
 	{"fmt-fail-j0002", caseFmtFailJ0002},
+	{"reserved-field-roundtrip", caseReservedFieldRoundtrip},
+	{"j4010-container-grouping", caseJ4010ContainerGrouping},
+	{"j4011-map-escape-cause", caseJ4011MapEscapeCause},
+	{"j3009-alias-gate", caseJ3009AliasGate},
 }
 
 func defaultExe() string {

@@ -55,6 +55,26 @@ fn is_legal_label(name : String) -> Bool {
 }
 
 ///|
+/// 键是否「保留字类可改名」：本体非法但加一根下划线即合法（where → where_，
+/// 探针实锚合法 + fmt 幂等）。点号/大写开头等形态加下划线仍非法 → 不可改名，
+/// 维持 Map 逃生门（#13 批范围 = 保留字）
+fn is_sanitizable_label(name : String) -> Bool {
+  !is_legal_label(name) && is_legal_label(name + "_")
+}
+
+///|
+/// 确定性字段改名（对象内首见序）：合法键恒等；保留字 + "_"；与先前键的
+/// 改名撞车则续加下划线（原生 where_ 顶到 where__）。真键由 field-alias
+/// 注记承载（纯语法逆映射在尾下划线邻域数学上不可无歧义——注记是唯一全解）
+fn sanitize_field_label(key : String, taken : Array[String]) -> String {
+  let mut cand = if is_legal_label(key) { key } else { key + "_" }
+  while taken.contains(cand) {
+    cand = cand + "_"
+  }
+  cand
+}
+
+///|
 fn is_legal_type_name(name : String) -> Bool {
   if name == "" {
     return false
@@ -90,11 +110,13 @@ priv enum SampleTy {
 
 ///|
 priv struct ShapeGroup {
-  fields : Array[FieldSamples] // 按首见样本键序
-  field_index : Map[String, Int]
+  fields : Array[FieldSamples] // 按首见样本键序（label 为改名后形态）
+  field_index : Map[String, Int] // 原始 JSON 键 → 字段下标
   mut resolved_name : String // 定名后回填（walk 期间 JTStruct 名即此）
-  keys : Array[String] // 首见键序（#11：诊断报字段集差异，不泄漏派生类型名）
+  keys : Array[String] // 首见键序——原始 JSON 键（#11：诊断报字段集差异；#14-3：容器路径分组）
   mut count : Int // 样本计数（分布计数——人工建模分组直接可用）
+  paths : Array[String] // 出现过的容器路径（首见序去重——#14-3 按容器分组）
+  path_counts : Map[String, Int] // 路径 → 该处样本计数（分组小计的真值）
 }
 
 ///|
@@ -103,6 +125,8 @@ priv struct InferCtx {
   group_order : Array[String]
   used_type_names : Array[String]
   name_cache : Map[String, String] // 签名 → struct 名
+  aliases : Array[(String, String, String)] // (struct 名, 改名后 label, 原始 JSON 键)——field-alias 注记（#13）
+  map_escape_keys : Array[String] // 走了 Map 逃生门的非法键（首见序去重——J4011 文案点名键因）
   hints : Array[Diag]
   hint_keys : Array[String] // tagged-enum 提示去重（按键名）
   taken : Array[String] // 同目录已占类型名（跨文件去重——issue #4）
@@ -115,6 +139,7 @@ priv struct InferResult {
   structs : Array[(String, Array[(String, JType)])] // (struct 名, 字段表)
   root_ty : JType?
   hints : Array[Diag]
+  aliases : Array[(String, String, String)] // (struct 名, label, 原始键)——codegen 发射注记用
 }
 
 ///|
@@ -137,6 +162,8 @@ fn infer_shapes(
     group_order: [],
     used_type_names: [],
     name_cache: Map([]),
+    aliases: [],
+    map_escape_keys: [],
     hints: [],
     hint_keys: [],
     taken,
@@ -145,7 +172,7 @@ fn infer_shapes(
   }
   // 顶层对象组预命名 capitalize(stem)（config.json → Config——D-7 命名同源）
   prename_top_group(ctx, root)
-  let root_ty = walk_value(ctx, root)
+  let root_ty = walk_value(ctx, root, path="$")
   finalize_empty_root(ctx, root_ty)
   // 组定稿（首见序 = 确定性）
   let structs : Array[(String, Array[(String, JType)])] = []
@@ -202,7 +229,7 @@ fn infer_shapes(
   if has_empty_array(root_ty) {
     raise empty_arr_diag(ctx, "(top level)", "(elements)")
   }
-  { structs, root_ty: Some(root_ty), hints: ctx.hints, }
+  { structs, root_ty: Some(root_ty), hints: ctx.hints, aliases: ctx.aliases, }
 }
 
 ///|
@@ -279,8 +306,13 @@ fn alloc_type_name(ctx : InferCtx, base : String) -> String {
 }
 
 ///|
-/// 单值类型化（walk 全树；对象按合法 label 分流：struct 组 / Map 逃生门）
-fn walk_value(ctx : InferCtx, j : Json) -> JType raise Diag {
+/// 单值类型化（walk 全树；对象按可表达性分流：全合法/可改名键 → struct 组、
+/// 其余非法键 → Map 逃生门）。path 为容器路径（$ 键锚——#14-3 分组用）
+fn walk_value(
+  ctx : InferCtx,
+  j : Json,
+  path? : String = "$",
+) -> JType raise Diag {
   match j {
     Null => JTNullLike // 值位 null：上层样本聚合决定 Option
     True | False => JTBool
@@ -303,9 +335,10 @@ fn walk_value(ctx : InferCtx, j : Json) -> JType raise Diag {
       if elems.length() == 0 {
         return JTArray(JTEmpty)
       }
+      let elem_path = path + "[]"
       let mut elem : JType? = None
       for e in elems {
-        let t = walk_value(ctx, e)
+        let t = walk_value(ctx, e, path=elem_path)
         elem = Some(
           match elem {
             None => t
@@ -322,15 +355,28 @@ fn walk_value(ctx : InferCtx, j : Json) -> JType raise Diag {
         raise empty_obj_diag(ctx) // D-1：空对象单独形态
       }
       register_tagged_enum_hint(ctx, keys, o)
-      if keys.all(is_legal_label) {
-        walk_as_struct(ctx, keys, o)
+      // 键分流（#13）：保留字类可改名键（where → where_）随 struct 走，
+      // 原始键由 field-alias 注记承载；不可改名形态（点号/大写开头等）
+      // 维持 Map 逃生门，键因登记供 J4011 文案点名
+      let sanitizable = keys.all(fn(k) {
+        is_legal_label(k) || is_legal_label(k + "_")
+      })
+      if sanitizable {
+        walk_as_struct(ctx, keys, o, path~)
       } else {
+        for k in keys {
+          if !is_legal_label(k) && !is_legal_label(k + "_") {
+            if !ctx.map_escape_keys.contains(k) {
+              ctx.map_escape_keys.push(k)
+            }
+          }
+        }
         // 键名逃生门：非 String 值类型聚合（同构 → Map；异值键 J4011）
         let samples : Array[SampleTy] = []
         let ks : Array[String] = []
         o.each(fn(k, _) { ks.push(k) })
         for k in ks {
-          let t = walk_value(ctx, o.get(k).unwrap())
+          let t = walk_value(ctx, o.get(k).unwrap(), path=path + "." + k)
           samples.push(if t is JTNullLike { NullSample } else { Ty(t) })
         }
         JTMap(
@@ -388,7 +434,9 @@ fn walk_as_struct(
   ctx : InferCtx,
   keys : Array[String],
   o : Map[String, Json],
+  path? : String = "$",
 ) -> JType raise Diag {
+  // 签名 = 原始 JSON 键集（键集语义属 JSON 真相；改名只发生在 label 侧）
   let sig = signature_of_keys(keys)
   if !ctx.groups.contains(sig) {
     let g : ShapeGroup = {
@@ -397,30 +445,53 @@ fn walk_as_struct(
       resolved_name: "",
       keys,
       count: 0,
+      paths: [],
+      path_counts: Map([]),
     }
+    let labels : Array[String] = []
+    let pairs : Array[(String, String)] = [] // (改名后 label, 原始键)
     for k in keys {
+      let lbl = sanitize_field_label(k, labels)
+      labels.push(lbl)
+      pairs.push((lbl, k))
       g.field_index[k] = g.fields.length()
-      g.fields.push({ label: k, samples: [], })
+      g.fields.push({ label: lbl, samples: [], })
     }
     ctx.groups[sig] = g
     ctx.group_order.push(sig)
-    // 命名：预命名（顶层）优先；否则组首字段 capitalize（中文/不可大写化 → Root 系）
+    // 命名：预命名（顶层）优先；否则组首**原始**键 capitalize（where →
+    // Where——大写保留字派生类型名合法，探针实锚；中文/不可大写化 → Root 系）
     if !ctx.name_cache.contains(sig) {
-      let base = if g.fields.length() > 0 {
-        capitalize(g.fields[0].label)
+      let base = if g.keys.length() > 0 {
+        capitalize(g.keys[0])
       } else {
         capitalize(ctx.stem)
       }
       ctx.name_cache[sig] = alloc_type_name(ctx, base)
     }
-    ctx.groups[sig].resolved_name = ctx.name_cache[sig]
+    let name = ctx.name_cache[sig]
+    ctx.groups[sig].resolved_name = name
+    // 非恒等改名登记进 field-alias 集（组序 = 首见序，确定性）
+    for pair in pairs {
+      let (lbl, k) = pair
+      if lbl != k {
+        ctx.aliases.push((name, lbl, k))
+      }
+    }
   }
   let g = ctx.groups[sig]
   g.count = g.count + 1
+  if !g.paths.contains(path) {
+    g.paths.push(path)
+  }
+  g.path_counts[path] = match g.path_counts.get(path) {
+    Some(n) => n + 1
+    None => 1
+  }
   let ks : Array[String] = []
   o.each(fn(k, _) { ks.push(k) })
   for k in ks {
-    let t = walk_value(ctx, o.get(k).unwrap())
+    let t = walk_value(ctx, o.get(k).unwrap(), path=path + "." + k)
     g.fields[g.field_index[k]].samples.push(
       if t is JTNullLike {
         NullSample
@@ -508,25 +579,65 @@ fn lub(
 }
 
 ///|
-/// 键集漂移诊断（#11）：报字段集差异 + 分布计数（按样本数降序），不泄漏
-/// 派生类型名——人工建模 enum 分组直接可用（如 ×602 {...} / ×9 {...}）
+/// 键集漂移诊断（#11 报字段集差异 + 分布计数；#14-3 按容器路径分组——
+/// 顶层/嵌套单样本键集不再与数组元素混计，报「真漂移在哪」）
 fn keyset_drift_diag(
   ctx : InferCtx,
   in_array : Bool,
   at_map : Bool,
 ) -> Diag raise Diag {
-  let rows : Array[String] = []
-  let mut total = 0
+  // 全部容器路径（首见序去重）
+  let paths : Array[String] = []
   for sig in ctx.group_order {
     let g = ctx.groups[sig]
-    if g.count > 0 {
-      rows.push("×\{g.count} { \{g.keys.join(", ")} }")
-      total = total + g.count
+    for p in g.paths {
+      if !paths.contains(p) {
+        paths.push(p)
+      }
     }
   }
-  // 计数降序（稳定：同数按首见序）
-  let sorted = rows.copy()
-  sorted.sort_by(fn(a, b) { cmp_rows(b, a) })
+  // 按路径分组：同容器 ≥2 键集 = 真漂移（计数取该路径的小计——path_counts）
+  let sections : Array[String] = []
+  for p in paths {
+    let rows : Array[String] = []
+    let mut total = 0
+    for sig in ctx.group_order {
+      let g = ctx.groups[sig]
+      let n = match g.path_counts.get(p) {
+        Some(n) => n
+        None => 0
+      }
+      if n > 0 {
+        rows.push("×\{n} { \{g.keys.join(", ")} }")
+        total = total + n
+      }
+    }
+    if rows.length() >= 2 {
+      // 计数降序（稳定：同数按首见序）
+      let sorted = rows.copy()
+      sorted.sort_by(fn(a, b) { cmp_rows(b, a) })
+      sections.push(
+        "at \{p}: \{sorted.length()} distinct key sets in \{total} samples: \{sorted.join("; ")}",
+      )
+    }
+  }
+  let dist = if sections.length() > 0 {
+    sections.join(" | ")
+  } else {
+    // 退化面（跨路径合流撞形，无同容器漂移）：全量平铺兜底——如实报
+    let rows : Array[String] = []
+    let mut total = 0
+    for sig in ctx.group_order {
+      let g = ctx.groups[sig]
+      if g.count > 0 {
+        rows.push("×\{g.count} { \{g.keys.join(", ")} }")
+        total = total + g.count
+      }
+    }
+    let sorted = rows.copy()
+    sorted.sort_by(fn(a, b) { cmp_rows(b, a) })
+    "\{sorted.length()} distinct key sets in \{total} samples: \{sorted.join("; ")}"
+  }
   raise Diag(
     code=if in_array {
       JHeteroArr
@@ -536,7 +647,7 @@ fn keyset_drift_diag(
       JHeteroField
     },
     loc=dummy_loc(),
-    message="incompatible object shapes across samples (D-5 key-set drift): \{sorted.length()} distinct key sets in \{total} samples: \{sorted.join("; ")}",
+    message="incompatible object shapes across samples (D-5 key-set drift): \{dist}",
     help=Some(
       "key-set drift is not auto-converted — hand-model each key set as an enum variant (D-5), or make the samples uniform",
     ),
@@ -571,6 +682,19 @@ fn hetero_diag(
   what : String,
   at_map? : Bool = false,
 ) -> Diag raise Diag {
+  // Map 逃生门路径的失败须点名键因（#13 文案错位修复）：真因是「键不是
+  // 合法字段名 → 整对象被退化为 Map、异型值无法统一」，不是跨样本异构
+  if at_map && ctx.map_escape_keys.length() > 0 {
+    raise Diag(
+      code=JMixedKeys,
+      loc=dummy_loc(),
+      message="cannot unify values under keys that are not legal MoonBit field labels (\{ctx.map_escape_keys.map(fn(k) { "'\{k}'" }).join(", ")}): \{what}",
+      help=Some(
+        "these keys force Map degradation (heterogeneous values cannot unify) — rename the keys in the JSON, or hand-write a struct",
+      ),
+      path=ctx.fname,
+    )
+  }
   raise Diag(
     code=if in_array {
       JHeteroArr

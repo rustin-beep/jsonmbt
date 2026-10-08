@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Fixed（issue #13：保留字字段名 + issue #14-3：J4010 报告粒度）
+
+- **#13 保留字字段名（`where` 等）**：修复前任一保留字键把整对象踢进 Map 逃生门——同层异类型兄弟值统一失败时泄漏出与保留字毫无关系的 `J4011 incompatible types across samples`（文案错位），单字段对象则**静默降级** `Map[String, V]`（无提示的毒产物）。修复：保留字类键（加 `_` 即合法——探针实锚 `where_` 合法 + fmt 幂等）确定性改名走 struct；类型名按**原始键**派生（`where` → `struct Where`，大写保留字合法）
+- **`// jsonmbt: field-alias <Struct>.<label> = "<json键>"` 注记**（合法 MoonBit 注释，fmt 幂等）：产物头部发射非恒等改名表，build/check 预扫描注释层（moon parser 剥注释）按注记还原 JSON 键。纯语法逆映射在尾下划线邻域**数学上不可无歧义**（`where`→`where_` 与原生键 `where_` 任何确定性后缀规则都撞），显式注记是唯一全解——手写文件也因此首次能表达保留字键对象
+- 撞名两级下划线：`{"where":1,"where_":2}` → 字段 `where_`/`where__` 双注记，往返无损
+- **J3009**（新码，只增不改）：注记畸形（行文法）或语义错（指向不存在的 struct/字段、恒等注记、隐含 JSON 键碰撞、重复注记）一律 fail loud
+- **#13 文案**：不可改名键（点号/大写开头等，本批范围外）维持 Map 逃生门，但失败文案改为点名键因（`cannot unify values under keys that are not legal MoonBit field labels ('a.b')`），不再误导用户去查不存在的跨样本异构
+- **#14-3 J4010 键集分布按容器路径分组**：`at $.entries[]: 2 distinct key sets in 2 samples: ×1 { a, b }; ×1 { a, c }`——顶层/嵌套单样本键集不再与数组元素混计（修复前报 `4 distinct key sets` 把顶层 doc 也计入）；跨路径合流撞形无同容器漂移时回退全量平铺（诚实兜底）
+- probe/samples 新样本对 `reserved_keys`（Vitro demo_ui_lint 形态：rules 数组含 where 字段 + 异类型兄弟）；层 2 驱动 +4 用例（往返/两份新文案 golden/J3009 门禁），16/16 绿
+
 ### Added（pages playground：P2 js 出口预演）
 
 - `pages/` 前端 demo：JSON ↔ .json.mbt 双栏实时转换（overlay 语法高亮）+ 21 卡「能吃下什么」能力矩阵，全部过真实引擎冒烟（`pages/smoke.mjs`，22 断言）

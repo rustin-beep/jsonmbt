@@ -59,6 +59,8 @@ pub(all) enum JCode {
   JUnknownField
   JMissingField
   JDupField
+  JTagCollision
+  JBadAlias
   JEmptyArr
   JEmptyObj
   JAllNull

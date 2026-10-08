@@ -24,6 +24,7 @@ pub(all) enum JCode {
   JMissingField // J3006 缺必填字段
   JDupField // J3007 重复字段
   JTagCollision // J3008 enum payload 字段与 tag 键（case）撞车——D-5 转正规格
+  JBadAlias // J3009 字段改名注记（// jsonmbt: field-alias）畸形或语义错（#13）
   JEmptyArr // J4001 孤立空数组：元素类型无线索（D-1 阻断，两级启发后仍无解）
   JEmptyObj // J4002 空对象：无字段可推（D-1 空对象单独形态）
   JAllNull // J4003 全 null：Option 基型无信息（D-1 家族）
@@ -58,6 +59,7 @@ pub fn JCode::num(self : JCode) -> String {
     JMissingField => "J3006"
     JDupField => "J3007"
     JTagCollision => "J3008"
+    JBadAlias => "J3009"
     JEmptyArr => "J4001"
     JEmptyObj => "J4002"
     JAllNull => "J4003"
