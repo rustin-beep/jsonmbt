@@ -348,8 +348,12 @@ fn payload_case(
           path="",
         )
       }
-      // payload 求值：期望类型 = 该变体的形参类型（enum 定义处收）
-      let arg_ty = def.payload_types.get(variant)
+      // payload 求值：期望类型 = 该变体的形参类型（enum 定义处收）。
+      // 形参为 enum 名时 parse_type 产 JTStruct 裸名——与 root/struct 字段
+      // 侧同款 resolve_custom 查表分化（审阅 P2：曾漏，嵌套 payload 误报 J3004）
+      let arg_ty = def.payload_types.get(variant).map(fn(t) {
+        resolve_custom(env, enums, t)
+      })
       let pj = l0_expr(env, enums, payload, arg_ty, depth + 1)
       // tag 对象展开
       let obj : Map[String, Json] = Map([])

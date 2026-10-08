@@ -1,5 +1,7 @@
-// pages 样例矩阵全量冒烟（一次性勘探，勿入防线）——与 index.html 样例矩阵同步：
-// 绿区应 ok、红区应报对应 J 码、build 侧断言降级产物特征
+// pages 样例矩阵全量冒烟——与 index.html 样例矩阵同步：绿区应 ok、红区应报
+// 对应 J 码、build 侧断言降级产物特征。**部署门**（pages.yml 调用）：断言
+// 红必须 exit 1——红不上线（审阅 P1 处置：曾只有 console.log，rc 恒 0，
+// CI 门不挡红）
 import { js_import, js_build } from './ffi.js';
 
 const EAT = [
@@ -25,7 +27,8 @@ const REJECT = [
 ];
 const BUILD = [
   ['enum tag 展开', 'struct Pt {\n  x : Int\n  y : Int\n}\nenum Shape {\n  Dot(Pt)\n  Unit\n}\npub let shapes : Array[Shape] = [Dot(Pt::{ x: 1, y: 2 }), Unit]', r => r.ok && r.json.includes('"case":"Dot"') && r.json.includes('"Unit"')],
-  ['Option None→null', 'struct S {\n  nick : String?\n}\npub let s : S = S::{ nick: None }', r => r.ok && r.json === '{"nick":null}'],
+  ['Option（index 卡逐字同步）', 'struct S {\n  nick : String?\n}\npub let s : S = S::{ nick: Some("x") }', r => r.ok && r.json === '{"nick":"x"}'],
+  ['Option None→null（语义专断）', 'struct S {\n  nick : String?\n}\npub let s : S = S::{ nick: None }', r => r.ok && r.json === '{"nick":null}'],
   ['多行字符串', 'pub let doc : String = #|\n#| 第一行\n#| 第二行', r => r.ok && r.json.includes('第一行')],
   ['注释尾逗号丢弃', 'pub let s = {\n  "a": 1, // 会消失\n}', r => r.ok && r.json === '{"a":1}'],
 ];
@@ -46,4 +49,5 @@ for (const [name, s, ok] of BUILD) {
 // repr 保真专断（两段式：import content → build json）
 const i64 = JSON.parse(js_build(JSON.parse(js_import('{"id": 9007199254740993}', 'demo')).content));
 if (!(i64.ok && i64.json === '{"id":9007199254740993}')) { bad++; console.log('Int64 repr FAIL:', JSON.stringify(i64).slice(0, 120)); }
-console.log(bad === 0 ? 'SMOKE ALL OK (eat 10 + reject 7 + build 4 + i64 1)' : 'SMOKE BAD=' + bad);
+console.log(bad === 0 ? 'SMOKE ALL OK (eat 10 + reject 7 + build 5 + i64 1)' : 'SMOKE BAD=' + bad);
+if (bad) process.exit(1); // 部署门契约：断言红 = rc 1（pages.yml 据此阻断 deploy）

@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### Fixed（深度审阅处置：P1×1 + P2×2 + P3×3 修 / P3×1 拍板登记）
+
+- **P1 部署门不挡红**：`pages/smoke.mjs` 断言失败只有 `console.log`、rc 恒 0——`pages.yml`「smoke 红不上线」承诺不成立。修：末尾 `if (bad) process.exit(1)` + 头注从「一次性勘探勿入防线」改为部署门口径（注入复现双向验证：坏断言 rc=1 / 正常 rc=0）
+- **P2 嵌套 enum payload 误报**：`enum Field { Named(Col) }` + 字面量 `Named(X)` 被误报 J3004——payload 形参类型存 parse_type 原值（JTStruct 裸名），payload_case 消费点漏 `resolve_custom`（root/struct 字段侧都 resolve，唯 payload 漏）。修：消费点 resolve；层 1 新用例先行红（审阅注入证明锚聋——修复后 87→88 锚仍绿说明原 87 无此路径）
+- **P2 migrate taken 模拟失真**：目录已有 .json.mbt 孪生时 taken=[] 起始漏盘面名——`--write` 产物与真实 import 不一致 → `import --check` rc=2 自相矛盾。修：per-directory 预扫盘面既有 .mbt struct 名作起始 taken + 目录级累积（跨目录互不影响，对齐真实 import 的输出目录扫描基准）；层 2 新用例（前缀化告警 + 自洽闸 rc=0 + BId 形态）先行红
+- **P3 J4010/J4011 截断计数**：诊断在首个冲突合并处短路，后续样本未入分布——「N distinct in M samples」实为下界。修：help 明示「counts cover samples seen up to the first conflicting merge — treat them as lower bounds」（层 2 golden 先行红同步）
+- **P3 pages.yml 缺 MOON_CC**：与其自身注释/index.html 页脚「同款命令勿单侧漂移」矛盾——补 `env: MOON_CC: clang`（js 后端实际不走 C 编译器，仅为三处命令形态一致）
+- **P3 矩阵与 smoke 不同步**：index.html Option 卡 `Some("x")` vs smoke `None`——smoke 改为 index 卡逐字同步 + None→null 语义专断另立一条（BUILD 集 4→5，「全部过冒烟」承诺成立）
+- **P3 payload `value` 键不对称（拍板：登记不修）**：标量 payload 用 `"value"` 键、struct payload 含 `value` 字段展平同键——J3008 只防 `case` 不防 `value`。拦 `value` 会误伤合法数据字段（真实成本）vs 实际歧义可由 `case` 值区分（收益低）——登记为 D-5 已知面（PLAN §6）
+- 审阅「已排除」两项（cmp_rows `×` 偏移未致排序失效、`#|` 行不误触注记扫描）确认不处置
+
 ### Fixed（issue #15：J2007 help 文案与实现对齐）
 
 - J2007/J4003/J3004/J3006 四处 help 文案的 `Option[T]` → `T? (Option)`——Option 的合法写法是 MoonBit 后缀糖 `T?`（前缀形态 `Option[Int]` 被 parse 判 JTUnsupported 拒收），文案列 `Option[T]` 为 supported 是指路被拒写法（pages playground 样例卡实测发现）。方案 A（改文案）；方案 B（放开前缀别名）按 issue 论证不做（引出产物 fmt 形态问题）

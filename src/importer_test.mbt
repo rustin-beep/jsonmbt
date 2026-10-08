@@ -712,3 +712,42 @@ test "import : --type-name-map 语义错拒绝（J1010，#6-4）" {
   }
   inspect(d2.contains("[J1010]"), content="true")
 }
+
+///|
+test "D-5 嵌套 enum payload：payload 类型是 enum 名时须 resolve（审阅 P2）" {
+  // 带参构造器的形参类型为 enum 名：parse_type 产 JTStruct，查表分化
+  // 需要 resolve_custom——root/struct 字段侧都 resolve，唯 payload 漏
+  // （修复前：合法输入误报 J3004 expects Col, got enum variant 'X'）
+  let doc =
+    #|enum Col {
+    #|  X
+    #|}
+    #|enum Field {
+    #|  Named(Col)
+    #|}
+    #|struct T {
+    #|  f : Field
+    #|}
+    #|
+    #|pub let t : T = T::{
+    #|  f: Named(X),
+    #|}
+  inspect(
+    @src.build_source(doc, path="t.json.mbt", expected_name="t"),
+    content="{\"f\":{\"case\":\"Named\",\"value\":\"X\"}}",
+  )
+  // struct payload 形参（既有锚已盖）不受影响：名在 struct 表命中，
+  // resolve_custom 原样透传
+  let doc2 =
+    #|struct P {
+    #|  v : Int
+    #|}
+    #|enum E {
+    #|  Tag(P)
+    #|}
+    #|pub let e : E = Tag(P::{ v: 7 })
+  inspect(
+    @src.build_source(doc2, path="e.json.mbt", expected_name="e"),
+    content="{\"case\":\"Tag\",\"v\":7}",
+  )
+}

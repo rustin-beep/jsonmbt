@@ -746,7 +746,7 @@ fn keyset_drift_diag(
     loc=dummy_loc(),
     message="incompatible object shapes across samples (D-5 key-set drift): \{dist}",
     help=Some(
-      "key-set drift is not auto-converted — hand-model each key set as an enum variant (D-5), or make the samples uniform",
+      "key-set drift is not auto-converted — hand-model each key set as an enum variant (D-5), or make the samples uniform; counts cover samples seen up to the first conflicting merge (the scan stops there), so treat them as lower bounds",
     ),
     path=ctx.fname,
   )

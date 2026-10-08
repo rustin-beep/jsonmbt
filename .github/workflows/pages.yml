@@ -27,6 +27,11 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # 与 index.html 页脚/命令注释逐字对齐（审阅 P3：勿单侧漂移；js 后端
+  # 实际不走 C 编译器，此值仅保持三处命令形态一致）
+  MOON_CC: clang
+
 jobs:
   build:
     name: build / smoke

@@ -513,7 +513,7 @@ func caseJ4010ContainerGrouping(exe, dir string) error {
 		return fmt.Errorf("rc = %d, want 1", rc)
 	}
 	want := []byte("jsonmbt: error [J4010] e.json:1:1 incompatible object shapes across samples (D-5 key-set drift): at $.entries[]: 2 distinct key sets in 2 samples: ×1 { a, b }; ×1 { a, c }\n" +
-		"  help: key-set drift is not auto-converted — hand-model each key set as an enum variant (D-5), or make the samples uniform\n")
+		"  help: key-set drift is not auto-converted — hand-model each key set as an enum variant (D-5), or make the samples uniform; counts cover samples seen up to the first conflicting merge (the scan stops there), so treat them as lower bounds\n")
 	if !bytes.Equal(stderr, want) {
 		return fmt.Errorf("stderr 逐字节不符（#14-3 分组文案）：\n--want--\n%q\n--got--\n%q", want, stderr)
 	}
@@ -788,6 +788,38 @@ func caseJ2007HelpText(exe, dir string) error {
 	return nil
 }
 
+// migrate-taken-twins（审阅 P2）：目录已有 .json.mbt 孪生时 taken 必须
+// 预扫纳入盘面 struct 名——修复前 taken=[] 起始，b.json 判 Id 不前缀化、
+// --write 产物与真实 import 不一致 → import --check rc=2 自相矛盾。
+func caseMigrateTakenTwins(exe, dir string) error {
+	// 已迁移产物（含 Id——b.json 的数组元素组也派生 Id → 真实 import 前缀化 BId）
+	writeFile(dir, "a.json.mbt", "pub struct Id {\n  id : Int\n}\n\npub let a : Id = Id::{\n  id: 1,\n}\n")
+	writeFile(dir, "b.json", `{"items": [{"id": 2}]}`)
+	// 侦察报告须含前缀化告警（模拟真实迁移的撞名序列）
+	rc, out, _, err := runExe(exe, dir, "migrate", ".")
+	if err != nil {
+		return err
+	}
+	if rc != 0 {
+		return fmt.Errorf("rc = %d, want 0", rc)
+	}
+	if !strings.Contains(string(out), "stem-prefixed") || !strings.Contains(string(out), "BId") {
+		return fmt.Errorf("应报前缀化告警 BId（taken 预扫失真则无告警）:\n%s", out)
+	}
+	// --write 落盘产物必须与真实 import 一致（自洽闸：import --check rc=0）
+	if rc, _, _, err := runExe(exe, dir, "migrate", ".", "--write"); err != nil || rc != 0 {
+		return fmt.Errorf("--write rc=%d err=%v", rc, err)
+	}
+	if rc, _, stderr, err := runExe(exe, dir, "import", "b.json", "--check"); err != nil || rc != 0 {
+		return fmt.Errorf("自洽闸：migrate --write 产物应与 import 一致（--check rc=%d）\nstderr=%q err=%v", rc, stderr, err)
+	}
+	prod, _ := os.ReadFile(filepath.Join(dir, "b.json.mbt"))
+	if !strings.Contains(string(prod), "pub struct BId") {
+		return fmt.Errorf("产物应为前缀化形态 BId:\n%s", prod)
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"probe-samples-golden", caseProbeSamples},
@@ -812,6 +844,7 @@ var cases = []testCase{
 	{"type-name-map", caseTypeNameMap},
 	{"migrate-three-boards", caseMigrate},
 	{"j2007-help-text", caseJ2007HelpText},
+	{"migrate-taken-twins", caseMigrateTakenTwins},
 }
 
 func defaultExe() string {

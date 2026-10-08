@@ -76,6 +76,25 @@ fn trim_trailing_nl(s : String) -> String {
 }
 
 ///|
+/// 盘面目录既有 .json.mbt/.mbt 的顶层 struct 名（真实 import 的
+/// scan_taken_struct_names 同语义——migrate 的 taken 模拟起始值，审阅 P2）
+fn dir_taken_names(dir : String) -> Array[String] {
+  let names : Array[String] = []
+  let entries = @fs.read_dir(dir) catch { _ => return names }
+  for e in entries {
+    if e.has_suffix(".mbt") && file_exists(dir + "/" + e) {
+      let text = @fs.read_file_to_string(dir + "/" + e) catch { _ => continue }
+      for name in struct_names_of(text) {
+        if !names.contains(name) {
+          names.push(name)
+        }
+      }
+    }
+  }
+  names
+}
+
+///|
 fn run_migrate(root_arg : String, write : Bool) -> Int {
   if !dir_exists(root_arg) {
     return jdiag_exit(@src.JIO, "migrate: '\{root_arg}' is not a directory")
@@ -88,8 +107,20 @@ fn run_migrate(root_arg : String, write : Bool) -> Int {
     return 0
   }
   print_out("scanned: \{files.length()} json file(s)\n")
-  // 内存 taken 模拟（#4 逐张迁移的撞名序列复现）
-  let taken : Array[String] = []
+  // 内存 taken 模拟（#4 逐张迁移的撞名序列复现）——**per-directory**：
+  // 起始值 = 盘面既有 .json.mbt/.mbt 的 struct 名（真实 import 走
+  // scan_taken_struct_names 扫输出目录；审阅 P2：曾 taken=[] 起始，
+  // 已迁移孪生的撞名被漏报、--write 产物与真实 import 不一致 → --check
+  // rc=2 自相矛盾）；迁移过程中产物名再累积进所在目录的 taken
+  let taken_by_dir : Map[String, Array[String]] = Map([])
+  let seen_dirs : Array[String] = []
+  for f in files {
+    let d = filepath_dir(f.1)
+    if !seen_dirs.contains(d) {
+      seen_dirs.push(d)
+      taken_by_dir[d] = dir_taken_names(d)
+    }
+  }
   let mut n_byte = 0
   let mut n_value = 0
   let mut n_reject = 0
@@ -112,7 +143,7 @@ fn run_migrate(root_arg : String, write : Bool) -> Int {
     }
     // import（taken 传入 → 跨文件前缀化在此发生）
     let outcome = try {
-      Ok(@src.import_source(raw, path=disp, stem~, taken_names=taken))
+      Ok(@src.import_source(raw, path=disp, stem~, taken_names=taken_by_dir[filepath_dir(full)]))
     } catch {
       e =>
         if e is @src.Diag(..) {
@@ -191,10 +222,12 @@ fn run_migrate(root_arg : String, write : Bool) -> Int {
             break
           }
         }
-        // taken 累积（下一张的撞名语境）
+        // taken 累积（同目录下一张的撞名语境；跨目录互不影响——真实
+        // import 的扫描基准就是输出目录）
+        let dir_taken = taken_by_dir[filepath_dir(full)]
         for name in struct_names_of(content) {
-          if !taken.contains(name) {
-            taken.push(name)
+          if !dir_taken.contains(name) {
+            dir_taken.push(name)
           }
         }
         // --write：非 reject/diff 落盘
