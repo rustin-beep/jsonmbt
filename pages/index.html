@@ -260,14 +260,16 @@ const EAT = [
   ['空数组两级启发', '孤立空数组本会拒；同文件他处同名非空字段给元素类型线索（D-1）', '{"list": [], "nested": {"list": [1, 2]}}'],
   ['emoji / 中文零转义', '降级输出 UTF-8 原样，无 \\uXXXX 噪音', '{"emoji": "🚀 中文"}'],
   ['保留字字段名（where）', 'MoonBit 保留字键自动改名 where_ 并发 field-alias 注记，build 按注记还原原键（往返无损）', '{"rules": [{"where": ".btn", "targets": ["btn-primary"]}]}'],
+  ['空容器 Never 占位', '推断无线索的空数组/空对象 → Array[Never] / Map[String, Never]（零构造器枚举 = 免费护栏：元素位写值编译期红）', '{"exemptions": [], "meta": {}}'],
+  ['转义宽集（moon 词法对齐）', 'JSON 侧 \\uXXXX / 代理对 / \\t 全族 import 无碍；降级输出最小转义 + 非 ASCII 裸 UTF-8（同值异形归一规范形）', '{"s": "a\\tb\\u4e2d\\ud83d\\ude80"}'],
 ];
 const REJECT = [
   ['异构数组', '元素类型不相容（拼错 vs 异构无解，J4010）', '{"rows": [1, "a"]}'],
   ['全 null 列', 'Option 基型无线索，给非 null 样本（J4003）', '{"id": 1, "u": null}'],
   ['超 Int64 大数', '无损要求：超 Int64 诚实拒，不静默 Double（J4020）', '{"big": 123456789012345678901234567890}'],
   ['重复键', '病态输入不替它选语义（J1003）', '{"k": 1, "k": 2}'],
-  ['空对象', '无字段可推（J4002）', '{"empty": {}, "id": 1}'],
-  ['孤立空数组', '无线索且全文件无同名字段可启发（J4001）', '{"items": []}'],
+  ['坏 JSON 语法', 'RFC 8259 之外的形态诚实拒（J1002）', '{"a": }'],
+  ['全 null 多列', '两列都无基型线索——至少一列给样本（J4003）', '{"id": 1, "x": null, "y": null}'],
   ['异值键对象', '键间类型不同的对象，请人工建模 struct（J4011）', '{"Content-Type": "text/html", "Content-Length": 123}'],
 ];
 const MBT = [
@@ -276,6 +278,7 @@ const MBT = [
   ['#| 多行字符串', '长中文文本不拼 \\n，降级行净内容以 \\n 连接', 'pub let doc : String = #|\n#| 第一行\n#| 第二行'],
   ['注释与尾逗号丢弃', '.json.mbt 侧天然合法；降级为纯 JSON 时注释消失（写「为什么」不进产物）', 'pub let s = {\n  "a": 1, // 会消失\n}'],
   ['嵌套 enum payload', 'payload 形参也可以是 enum 名——Named(Col) 收字面量 Named(X)，降级 {"case":"Named","value":"X"}', 'enum Col {\n  X\n}\nenum Field {\n  Named(Col)\n}\npub let f : Field = Named(X)'],
+  ['数字降级契约', '整数族解析值归一（-0 → 0、0x10 → 16）；Double 源拼写透传（1.50 原样——避免精度伪影）', 'struct N {\n  a : Int\n  b : Double\n  c : Int\n}\npub let n : N = N::{\n  a: -0,\n  b: 1.50,\n  c: 0x10,\n}'],
 ];
 
 function fill(id, items, side) {

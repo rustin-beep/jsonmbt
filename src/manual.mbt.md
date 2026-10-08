@@ -146,12 +146,103 @@ test "manual : build 层文本保真" {
 }
 ```
 
-## L0 类型面
+## 语法参考：`.json.mbt` 与 MoonBit 的对应
+
+一句话：**`.json.mbt` = MoonBit 的「数据切片」**——文件里只允许「类型定义
++ 一个顶层绑定」，值体只允许纯字面量。moon 把它当合法源文件（check/fmt/
+IDE 全家桶直接能用），jsonmbt 在其上追加「确定性降级为 JSON」的契约。
+**接受原则：moon 词法接受的一切字符串/字面量形态，jsonmbt 必须接受**
+（[#16](https://github.com/rustin-beep/jsonmbt/issues/16) 确立）。
+
+### 文件骨架（D-7 单文档）
+
+`struct`/`enum` 定义（任意个，可带注释）+ **恰好一个**
+`pub let <stem> [: T] = <字面量>`——绑定名必须等于文件名 stem（`cfg.json.mbt`
+→ `pub let cfg`，J2003 指路）：
+
+```mbt check
+///|
+test "manual : 文件骨架与 stem 同名" {
+  let src =
+    #|// 任意注释存活
+    #|struct Rule {
+    #|  id : String
+    #|}
+    #|
+    #|pub let rule : Rule = Rule::{ id: "r1" }
+  inspect(
+    @src.build_source(src, path="rule.json.mbt", expected_name="rule"),
+    content="{\"id\":\"r1\"}",
+  )
+}
+```
+
+### 类型头全集（与 JSON 的对应）
+
+| 类型写法 | JSON 对应 | 备注 |
+|---|---|---|
+| `Int` / `Int64` / `Double` / `String` / `Bool` | number/number/number/string/boolean | `Int` 32 位（2³¹−1 实测界）；Int64 全精度文本保留 |
+| `T?`（**后缀糖**） | `null` ↔ 值 | **`Option[T]` 前缀形态 J2007 拒**；嵌套 `T??` 同拒（三态编码在 §8 评审） |
+| `Array[T]` | array | 同构元素 |
+| `Map[String, V]` | object（键序 = 书写序） | 键名逃生门（见下） |
+| 自定义 `struct` | object（键 = 字段名） | 类型即 schema |
+| `enum`（D-5/D-12） | 变体名字符串 / tag 对象 | 无参变体 = 字符串；带参 = payload 展开 + `"case"` 键 |
+
+### 值体全集（L0 纯字面量——求值分级冻结）
+
+record `S::{ ... }`、数组 `[...]`、map 字面量 `{ "键": 值 }`、`Some(v)` /
+`None`、enum 构造器（`Unit` / `Named(Payload)`）、字符串（含 `#|` 多行）、
+数字字面量。**任何计算（`1 + 2`）、标识符引用、跨文件引用 = J3001
+fail loud**（「所见即所得」是降级确定性的前提）。
+
+### 字符串转义（契约，#16）
+
+- 接受面 = **moon 词法宽集**：`\' \" \\ \/ \n \r \t \b \f \0 \xHH
+  \u{...}` 与 `\uXXXX` 定长（含 `\uD8xx\uDCxx` 代理对合成——moon 实测
+  全接受，孤立代理拒）；
+- 输出面 = 最小转义集（控制符/引号/反斜杠）+ 非 ASCII 裸 UTF-8
+  （`"\u4e2d"` 与裸 `中` 产同一输出——同值异形归一为规范形）。
+
+```mbt check
+///|
+test "manual : 转义宽集（moon 接受 ⇒ jsonmbt 接受）" {
+  let src =
+    #|struct T { s : String }
+    #|pub let t : T = T::{ s: "a\/b 中\u4e2d \ud83d\ude80" }
+  inspect(
+    @src.build_source(src, path="t.json.mbt", expected_name="t"),
+    content="{\"s\":\"a/b 中中 🚀\"}",
+  )
+}
+```
+
+### 数字（契约，#17）
+
+整数族（`Int`/`Int64`）走**解析值归一**（`-0` → `0`、`0x10` → `16`——
+JSON 只有十进制）；`Double` 保**源拼写透传**（`1.50` 原样输出，不归一为
+`1.5`——避免解析-再格式化的精度伪影）。
+
+### 键名两通道（#13）
+
+- **保留字键**（`where`/`type`… 加 `_` 即合法）：import 自动改名
+  （`where_`）+ 文件头注记 `// jsonmbt: field-alias S.label = "原键"`
+  还原（手写文件也可用——注记行文法/指向错误 = J3009）；
+- **不可改名键**（`a.b` 带点、大写开头）：该对象整体走
+  `Map[String, V]` 逃生门（同值类型才能统一）。
+
+### 空容器占位（#14-2a）
+
+推断无线索的空数组/空对象 → `Array[Never]` / `Map[String, Never]`
+（产物自带 `pub enum Never {}` 零构造器定义——**免费护栏**：元素位写值
+在 moon 编译期 `[4014]` 红）；`--strict` 恢复旧拒绝行为（J4001/J4002）。
+
+## L0 类型面（速查版）
 
 字段类型全集：`Int`（32 位，真实编译界 2³¹−1）/ `Int64` / `Double` /
-`String` / `Bool` / `Option[T]`（null → None、值 → Some）/ `Array[T]` /
-`Map[String, V]`（键名逃生门）/ 自定义 `struct`。求值分级 L0（纯字面量）
-冻结——任何计算（`1 + 2`、引用、条件）都是 J3001 fail loud：
+`String` / `Bool` / `T?`（后缀糖——**`Option[T]` 前缀形态 J2007 拒**，
+嵌套 `T??` 同拒）/ `Array[T]` / `Map[String, V]`（键名逃生门）/ 自定义
+`struct` / `enum`（D-5/D-12 转正）。求值分级 L0（纯字面量）冻结——
+任何计算（`1 + 2`、引用、条件）都是 J3001 fail loud：
 
 ```mbt check
 ///|
@@ -178,6 +269,8 @@ test "manual : L0 白名单 fail loud" {
 | J300x | 值面：非 L0、Map 键、无对应字面量、类型不匹配、未知/缺失/重复字段 |
 | J400x | importer 阻断：D-1 家族（空容器/全 null）、异构、超 Int64（D-2 诚实拒绝） |
 | J4030 | tagged-enum 识别提示（hint 级，rc 0） |
+| J4031 | 空容器 Never 占位提示（hint 级，rc 0，#14-2a） |
+| J1010 | type-name-map 语义错（#6-4）；J3009 field-alias 注记错（#13） |
 | J500x | 漂移/差异（rc 2——`--check` 幂等闸首例） |
 
 rc 五值表（D-10）：`0` 成功 / `1` 输入错 / `2` 检测到漂移或差异 /
@@ -241,6 +334,8 @@ test "manual : #| 多行文本" {
 }
 ```
 
-**边界**：带 payload 构造器（`E(3032)`）v1 不支持（降级投影无自然 JSON
-形态——建模为全变体 `E3032_UnknownChar` 或 struct 字段）；裸构造器无
-类型上下文时语义不明，保守拒绝。
+**边界（2026-10-08 D-5 转正后勘误）**：带单参构造器（`Named(Payload)`）
+**已支持**——降级投影 = tag 对象展开（payload 字段进顶层 + `"case"` 键；
+标量 payload 加 `"value"` 键）；**payload 字段禁止叫 `case`**（J3008；
+`value` 与标量形态同键是登记的已知面——可由 case 值区分）。裸构造器无
+类型上下文时语义不明，保守拒绝（J3001）。

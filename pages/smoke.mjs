@@ -16,14 +16,17 @@ const EAT = [
   '{"list": [], "nested": {"list": [1, 2]}}',
   '{"emoji": "🚀 中文"}',
   '{"rules": [{"where": ".btn", "targets": ["btn-primary"]}]}',
+  '{"exemptions": [], "meta": {}}',
 ];
 const REJECT = [
   ['{"rows": [1, "a"]}', 'J4010'],
   ['{"id": 1, "u": null}', 'J4003'],
   ['{"big": 123456789012345678901234567890}', 'J4020'],
   ['{"k": 1, "k": 2}', 'J1003'],
-  ['{"empty": {}, "id": 1}', 'J4002'],
-  ['{"items": []}', 'J4001'],
+  // 空对象/孤立空数组（原 J4002/J4001）已默认 Never 占位（#14-2a，
+  // 绿区卡展示）——REJECT 面换真拒形态：
+  ['{"a": }', 'J1002'],
+  ['{"id": 1, "x": null, "y": null}', 'J4003'],
   ['{"Content-Type": "text/html", "Content-Length": 123}', 'J4011'],
 ];
 const BUILD = [
@@ -51,7 +54,7 @@ for (const [name, s, ok] of BUILD) {
 // repr 保真专断（两段式：import content → build json）
 const i64 = JSON.parse(js_build(JSON.parse(js_import('{"id": 9007199254740993}', 'demo')).content));
 if (!(i64.ok && i64.json === '{"id":9007199254740993}')) { bad++; console.log('Int64 repr FAIL:', JSON.stringify(i64).slice(0, 120)); }
-// 保留字往返专断（#13：EAT 末卡的语义断言——改名+注记+键还原）
+// 保留字往返专断（#13：EAT[10] 的语义断言——改名+注记+键还原）
 const rk = JSON.parse(js_import(EAT[10], 'demo'));
 const rkOk = rk.ok && rk.content.includes('// jsonmbt: field-alias Where.where_ = "where"') && rk.content.includes('where_ : String');
 if (!rkOk) { bad++; console.log('reserved-key import FAIL:', JSON.stringify(rk).slice(0, 160)); }
@@ -59,5 +62,29 @@ else {
   const rkBuilt = JSON.parse(js_build(rk.content));
   if (!(rkBuilt.ok && rkBuilt.json === '{"rules":[{"where":".btn","targets":["btn-primary"]}]}')) { bad++; console.log('reserved-key roundtrip FAIL:', JSON.stringify(rkBuilt).slice(0, 160)); }
 }
-console.log(bad === 0 ? 'SMOKE ALL OK (eat 11 + reject 7 + build 6 + i64 1 + reserved-key 1)' : 'SMOKE BAD=' + bad);
+// Never 占位专断（#14-2a：EAT[11]——空容器不再整张拒）
+const nv = JSON.parse(js_import(EAT[11], 'demo'));
+const nvOk = nv.ok && nv.content.includes('pub enum Never {}') && nv.content.includes('Array[Never]') && nv.content.includes('Map[String, Never]');
+if (!nvOk) { bad++; console.log('never-placeholder FAIL:', JSON.stringify(nv).slice(0, 160)); }
+else {
+  const nvBuilt = JSON.parse(js_build(nv.content));
+  if (!(nvBuilt.ok && nvBuilt.json === '{"exemptions":[],"meta":{}}')) { bad++; console.log('never roundtrip FAIL:', JSON.stringify(nvBuilt).slice(0, 160)); }
+}
+// 转义宽集往返专断（#16：\uXXXX/代理对 → 规范形裸 UTF-8）
+{
+  const B = String.fromCharCode(92);
+  const es = JSON.parse(js_import('{"s": "a' + B + 'tb' + B + 'u4e2d' + B + 'ud83d' + B + 'ude80"}', 'demo'));
+  const esOk = es.ok && es.content.includes(B + 't') && es.content.includes('中');
+  if (!esOk) { bad++; console.log('escape import FAIL:', JSON.stringify(es).slice(0, 160)); }
+  else {
+    const esBuilt = JSON.parse(js_build(es.content));
+    if (!(esBuilt.ok && esBuilt.json === '{"s":"a' + B + 'tb' + String.fromCharCode(0x4e2d, 0xd83d, 0xde80) + '"}')) { bad++; console.log('escape roundtrip FAIL:', JSON.stringify(esBuilt).slice(0, 160)); }
+  }
+}
+// 数字契约专断（#17：整数归一 / Double 透传——index 卡逐字同步）
+{
+  const nc = JSON.parse(js_build('struct N {\n  a : Int\n  b : Double\n  c : Int\n}\npub let n : N = N::{\n  a: -0,\n  b: 1.50,\n  c: 0x10,\n}'));
+  if (!(nc.ok && nc.json === '{"a":0,"b":1.50,"c":16}')) { bad++; console.log('number-contract FAIL:', JSON.stringify(nc).slice(0, 160)); }
+}
+console.log(bad === 0 ? 'SMOKE ALL OK (eat 12 + reject 7 + build 7 + i64 1 + rk/nv/es/nc 4)' : 'SMOKE BAD=' + bad);
 if (bad) process.exit(1); // 部署门契约：断言红 = rc 1（pages.yml 据此阻断 deploy）

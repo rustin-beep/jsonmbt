@@ -171,9 +171,10 @@ fn strict_check_keys(
 ) -> Unit raise Diag {
   let labels : Array[String] = []
   match table.get(sname) {
-    Some(fs) => for f in fs {
-      labels.push(f.0)
-    }
+    Some(fs) =>
+      for f in fs {
+        labels.push(f.0)
+      }
     None => ()
   }
   let implied = implied_json_keys(atab, sname, labels)
@@ -184,7 +185,9 @@ fn strict_check_keys(
         code=JUnknownField,
         loc=dummy_loc(),
         message="unknown field '\{k}' — struct '\{sname}' declares: \{implied.join(", ")}",
-        help=Some("the source JSON has keys the declared type does not cover — update the struct header or the JSON"),
+        help=Some(
+          "the source JSON has keys the declared type does not cover — update the struct header or the JSON",
+        ),
         path="",
       )
     }
@@ -196,7 +199,9 @@ fn strict_check_keys(
         code=JMissingField,
         loc=dummy_loc(),
         message="missing field '\{k}' in '\{sname}' — declared in the type header but absent from the source JSON",
-        help=Some("fill only rewrites the value body; add the key to the JSON or drop it from the struct"),
+        help=Some(
+          "fill only rewrites the value body; add the key to the JSON or drop it from the struct",
+        ),
         path="",
       )
     }
@@ -365,15 +370,7 @@ fn fill_enum_variant(
   let payload_keys : Array[String] = ks.filter(fn(k) { k != "case" })
   match variant {
     Some(v) =>
-      render_variant_payload(
-        table,
-        atab,
-        enums,
-        def,
-        v,
-        payload_keys,
-        o,
-      )
+      render_variant_payload(table, atab, enums, def, v, payload_keys, o)
     None => {
       // ② 键集精确匹配
       for v in def.payload_variants {
@@ -382,9 +379,10 @@ fn fill_enum_variant(
           Some(JTStruct(px)) => {
             let labels : Array[String] = []
             match table.get(px) {
-              Some(fs) => for f in fs {
-                labels.push(f.0)
-              }
+              Some(fs) =>
+                for f in fs {
+                  labels.push(f.0)
+                }
               None => ()
             }
             let implied = implied_json_keys(atab, px, labels)
@@ -392,13 +390,7 @@ fn fill_enum_variant(
               payload_keys.iter().all(fn(k) { implied.contains(k) })
             if same {
               return render_variant_payload(
-                table,
-                atab,
-                enums,
-                def,
-                v,
-                payload_keys,
-                o,
+                table, atab, enums, def, v, payload_keys, o,
               )
             }
           }

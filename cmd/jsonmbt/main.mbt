@@ -791,7 +791,9 @@ fn run_fill(
       return jdiag_exit(
         @src.JIO,
         "cannot read fill target '\{fill_target}'",
-        help=Some("--fill needs an existing .json.mbt whose type header is reused"),
+        help=Some(
+          "--fill needs an existing .json.mbt whose type header is reused",
+        ),
       )
   }
   let stem = match json_stem_of(path) {
@@ -801,7 +803,7 @@ fn run_fill(
   let filled = @src.fill_source(
     src,
     existing,
-    path=path,
+    path~,
     fill_path=fill_target,
     stem~,
   ) catch {

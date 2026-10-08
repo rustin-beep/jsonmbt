@@ -234,9 +234,7 @@ pub fn fill_source(
       fields.push((f.0, resolve_custom(doc.structs, doc.enums, f.1)))
     }
     table[d.name] = fields
-    d.aliases.each(fn(label, key) {
-      aliases.push((d.name, label, key))
-    })
+    d.aliases.each(fn(label, key) { aliases.push((d.name, label, key)) })
   })
   let atab = build_alias_table(aliases)
   let value = render_top_value(
@@ -261,7 +259,9 @@ pub fn fill_source(
           code=JNoDoc,
           loc=dummy_loc(),
           message="no top-level pub let binding to fill",
-          help=Some("the fill target must contain the value body after `pub let ... = `"),
+          help=Some(
+            "the fill target must contain the value body after `pub let ... = `",
+          ),
           path=fill_path,
         )
       }
