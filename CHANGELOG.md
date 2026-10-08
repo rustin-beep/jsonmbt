@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Added（issue #5：`jsonmbt doctor` 只读接入诊断）
+
+- `jsonmbt doctor [dir]`——诊断「这个仓的 .json.mbt 有没有真正接上 MoonBit 工具链」（Vitro 批②最大坑：不在包边界内的文件 moon 完全看不见，「验证了没被编译的东西等于没验证」）。**只诊断不 setup**（包怎么切/workspace 怎么分是用户仓的结构决策）
+- 每文件四项：包边界（moon.pkg 在本目录 + 祖先链模块根；❌ 给一行修复）/ 跨文件 struct·enum 撞名（moon 编译期才炸的坑提前拦）/ check·build（含 D-7 stem 归属，纯内存）/ fmt 稳定（TEMP 影子包实测——同目录一次 spawn，per-file 结果表）；另有 workspace 上下文行
+- rc：任一 ❌ → 1（CI 直接挂闸）；全 ✅/⚠️ → 0；moon 缺席/临时目录缺席 → fmt 项诚实 ⚠️ 不误报
+- 全程只读（验收 4：跑前后目录快照不变）；影子包用完递归清理
+- 新 FFI stub `jsonmbt_is_windows`（跨平台 shell 重定向语法分叉）
+- **陷阱 #45 登记**（doctor 影子开发中实测）：`moon fmt <path>` 把 path 当项目内包过滤 pattern，项目外/非包路径**静默跳过且 rc=0**——跨项目 fmt 唯一可靠形态 = `cd <目标> && moon fmt`；fix 文案按包边界状态分叉（未接包时先接再 fmt）
+- 层 2 +4 用例（无包 ❌ / 撞名 ❌ / 完整接入无 ❌ / 只读快照），20/20 绿
+
 ### Fixed（issue #13：保留字字段名 + issue #14-3：J4010 报告粒度）
 
 - **#13 保留字字段名（`where` 等）**：修复前任一保留字键把整对象踢进 Map 逃生门——同层异类型兄弟值统一失败时泄漏出与保留字毫无关系的 `J4011 incompatible types across samples`（文案错位），单字段对象则**静默降级** `Map[String, V]`（无提示的毒产物）。修复：保留字类键（加 `_` 即合法——探针实锚 `where_` 合法 + fmt 幂等）确定性改名走 struct；类型名按**原始键**派生（`where` → `struct Where`，大写保留字合法）

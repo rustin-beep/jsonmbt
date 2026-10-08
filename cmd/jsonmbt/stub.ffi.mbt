@@ -44,3 +44,9 @@ fn jsonmbt_run_cmd(cmd : Bytes, len : Int) -> Int {
   let _ = len
   abort("run_cmd is only available in the native build")
 }
+
+///|
+#cfg(not(target="native"))
+fn jsonmbt_is_windows() -> Int {
+  abort("platform probe is only available in the native build")
+}

@@ -563,6 +563,102 @@ func caseJ3009AliasGate(exe, dir string) error {
 	return nil
 }
 
+// doctor 子命令四用例（issue #5 验收清单逐条映射）：只读诊断「.json.mbt
+// 有没有真正接上 MoonBit 工具链」。修复前（无 doctor）unknown command
+// rc 4 → 全红；验收 = ❌ 挡住 + 修复行 / 撞名 ❌ / 完整接入无 ❌ / 全程只读。
+func doctorFile(name, structs, binding string) string {
+	return "///|\npub struct " + structs + " {\n  v : Int\n}\n\n///|\npub let " + binding + " : " + structs + " = " + structs + "::{\n  v: 1,\n}\n"
+}
+
+func caseDoctorNoPkg(exe, dir string) error {
+	// 验收 1：未接 moon.pkg 的目录 → ❌ + 一行修复
+	writeFile(dir, "w.json.mbt", doctorFile("W", "W", "w"))
+	rc, out, _, err := runExe(exe, dir, "doctor", ".")
+	if err != nil {
+		return err
+	}
+	if rc != 1 {
+		return fmt.Errorf("rc = %d, want 1 (无 moon.pkg 必须挡住)", rc)
+	}
+	for _, frag := range []string{"❌ package boundary", "moon.pkg"} {
+		if !strings.Contains(string(out), frag) {
+			return fmt.Errorf("stdout 缺 %q:\n%s", frag, out)
+		}
+	}
+	return nil
+}
+
+func caseDoctorDupStruct(exe, dir string) error {
+	// 验收 2：同目录两张含同名 struct 的 .json.mbt → ❌ 指名（moon 编译期
+	// 才炸的坑，doctor 提前拦——单文件各自合法，check/build 项不背锅）
+	writeFile(dir, "a.json.mbt", doctorFile("Shared", "Shared", "a"))
+	writeFile(dir, "b.json.mbt", doctorFile("B", "Shared", "b"))
+	rc, out, _, err := runExe(exe, dir, "doctor", ".")
+	if err != nil {
+		return err
+	}
+	if rc != 1 {
+		return fmt.Errorf("rc = %d, want 1 (跨文件撞名必须挡住)", rc)
+	}
+	for _, frag := range []string{"❌ struct names", "Shared", "a.json.mbt", "b.json.mbt"} {
+		if !strings.Contains(string(out), frag) {
+			return fmt.Errorf("stdout 缺 %q:\n%s", frag, out)
+		}
+	}
+	return nil
+}
+
+func caseDoctorClean(exe, dir string) error {
+	// 验收 3：完整接入（模块根 + moon.pkg + 合法文件）→ 无 ❌（fmt 项随
+	// 环境可能 ⚠️，断言不含 ❌——CI 无 moon 时不误报）
+	writeFile(dir, "moon.mod", "name = \"probe/clean\"\nversion = \"0.1.0\"\n")
+	writeFile(dir, "moon.pkg", "")
+	writeFile(dir, "c.json.mbt", doctorFile("C", "C", "c"))
+	rc, out, _, err := runExe(exe, dir, "doctor", ".")
+	if err != nil {
+		return err
+	}
+	if rc != 0 {
+		return fmt.Errorf("rc = %d, want 0 (完整接入全绿)\n%s", rc, out)
+	}
+	if strings.Contains(string(out), "❌") {
+		return fmt.Errorf("完整接入不得出现 ❌:\n%s", out)
+	}
+	if !strings.Contains(string(out), "✅ package boundary") {
+		return fmt.Errorf("缺 ✅ package boundary:\n%s", out)
+	}
+	return nil
+}
+
+func caseDoctorReadonly(exe, dir string) error {
+	// 验收 4：全程只读——跑前后目录快照（文件集 + 内容）逐字节不变
+	writeFile(dir, "w.json.mbt", doctorFile("W", "W", "w"))
+	snap := func() map[string]string {
+		m := map[string]string{}
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if b, err := os.ReadFile(filepath.Join(dir, e.Name())); err == nil {
+				m[e.Name()] = string(b)
+			}
+		}
+		return m
+	}
+	before := snap()
+	if _, _, _, err := runExe(exe, dir, "doctor", "."); err != nil {
+		return err
+	}
+	after := snap()
+	if len(before) != len(after) {
+		return fmt.Errorf("doctor 产生/删除了文件: before=%v after=%v", before, after)
+	}
+	for k, v := range before {
+		if after[k] != v {
+			return fmt.Errorf("doctor 改写了 %s", k)
+		}
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"probe-samples-golden", caseProbeSamples},
@@ -580,6 +676,10 @@ var cases = []testCase{
 	{"j4010-container-grouping", caseJ4010ContainerGrouping},
 	{"j4011-map-escape-cause", caseJ4011MapEscapeCause},
 	{"j3009-alias-gate", caseJ3009AliasGate},
+	{"doctor-no-pkg", caseDoctorNoPkg},
+	{"doctor-dup-struct", caseDoctorDupStruct},
+	{"doctor-clean", caseDoctorClean},
+	{"doctor-readonly", caseDoctorReadonly},
 }
 
 func defaultExe() string {

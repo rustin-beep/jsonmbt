@@ -50,9 +50,10 @@ fn usage() -> Int {
     "  jsonmbt build <file.json.mbt...|-> [-o <out.json>|-]\n" +
     "  jsonmbt check <file.json.mbt...|->\n" +
     "  jsonmbt import <file.json|-> [-o <out.json.mbt>|-] [--check] [--fmt]\n" +
+    "  jsonmbt doctor [dir] — read-only diagnosis: is this repo's .json.mbt really wired into moon?\n" +
     "degrade: .json.mbt -> .json (deterministic, compact); `-` reads stdin, `-o -` writes to stdout\n" +
     "ingest: .json/.jsonc -> .json.mbt (shape inference); --check = idempotence gate\n" +
-    "rc: 0 ok / 1 input error / 2 drift detected (--check) / 4 usage/IO",
+    "rc: 0 ok / 1 input error (doctor: blocked) / 2 drift detected (--check) / 4 usage/IO",
   )
   4
 }
@@ -415,8 +416,25 @@ fn main_rc() -> Int {
     return usage()
   }
   let verb = args[1]
-  if verb != "build" && verb != "check" && verb != "import" {
+  if verb != "build" && verb != "check" && verb != "import" && verb != "doctor" {
     return jdiag_exit(@src.JUsage, "unknown command '\{verb}'")
+  }
+  // doctor（#5）：独立参数面——恰好一个可选目录（默认 "."），无产物 flags
+  if verb == "doctor" {
+    if args.length() > 3 {
+      return jdiag_exit(
+        @src.JUsage,
+        "doctor takes at most one directory argument",
+      )
+    }
+    let dir = if args.length() == 3 { args[2] } else { "." }
+    if dir.has_prefix("-") && dir != "." {
+      return jdiag_exit(
+        @src.JUsage,
+        "doctor takes a directory, not flags (read-only diagnosis)",
+      )
+    }
+    return run_doctor(dir)
   }
   let paths : Array[String] = []
   let mut out_opt : String? = None

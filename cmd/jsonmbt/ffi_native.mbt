@@ -29,3 +29,7 @@ extern "C" fn jsonmbt_write_stdout(data : Bytes, len : Int) -> Unit = "jsonmbt_w
 #cfg(target="native")
 #borrow(cmd)
 extern "C" fn jsonmbt_run_cmd(cmd : Bytes, len : Int) -> Int = "jsonmbt_run_cmd"
+
+///|
+#cfg(target="native")
+extern "C" fn jsonmbt_is_windows() -> Int = "jsonmbt_is_windows"

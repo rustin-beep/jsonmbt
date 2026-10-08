@@ -120,3 +120,11 @@ MOONBIT_FFI_EXPORT int jsonmbt_run_cmd(moonbit_bytes_t cmd, int32_t len) {
 #endif
   return rc;
 }
+
+MOONBIT_FFI_EXPORT int jsonmbt_is_windows(void) {
+#ifdef _WIN32
+  return 1;
+#else
+  return 0;
+#endif
+}
