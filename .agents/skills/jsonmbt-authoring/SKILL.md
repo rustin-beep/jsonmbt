@@ -1,6 +1,6 @@
 ---
 name: jsonmbt-authoring
-description: ".json.mbt 类型化 JSON 数据文件的手写与机器生成指南——四命令、子集规则、enum 键集建模、emitter 纪律、round-trip 兜底。Use when authoring or editing .json.mbt files, wiring jsonmbt into a repo's CI or freeze loop, migrating .json data sources, or debugging J-codes. 触发词：jsonmbt、.json.mbt、类型化 JSON、数据真相源、J3004/J4011、round-trip"
+description: ".json.mbt 类型化 JSON 数据文件的手写与机器生成指南——五命令（build/check/import/doctor/migrate）、子集规则、enum 键集建模、保留字字段名与 field-alias、emitter 纪律、round-trip 兜底。Use when authoring or editing .json.mbt files, wiring jsonmbt into a repo's CI or freeze loop, migrating .json data sources, or debugging J-codes. 触发词：jsonmbt、.json.mbt、类型化 JSON、数据真相源、J3004/J4011、round-trip、doctor、migrate、type-name-map"
 ---
 
 # jsonmbt 数据文件写作指南
@@ -11,14 +11,17 @@ description: ".json.mbt 类型化 JSON 数据文件的手写与机器生成指�
 
 一句话：`.json.mbt` 是用 MoonBit 语法写的数据文件；`build` 是它的「另存为 JSON」；`moon check` 是它的「JSON Schema 校验器」。
 
-## 四命令
+## 五命令
 
 ```bash
 jsonmbt import  x.json -o x.json.mbt      # 一次性迁移：JSON → .mbt（形状推断）
 jsonmbt import  x.json --check            # 幂等闸：重导入必须逐字节一致（rc=2 漂移）
+jsonmbt import  x.json --type-name-map m.json  # 机器派生名 → 语义名（键=首次产物里的派生名，含前缀化形态）
 jsonmbt build   x.json.mbt -o x.json      # 确定性降级（同输入永同输出；失败零产物）
 jsonmbt build   x.json.mbt -o -           # build 链纯验证：stdout 出件（check 不跑降级链）
 jsonmbt check   x.json.mbt                # 只验不写（校验+内存构造，无降级 codegen）
+jsonmbt migrate  [dir] [--write]          # 批量迁移侦察：三榜报告（默认零写；rc 1=有 reject）
+jsonmbt doctor   [dir]                    # 只读诊断：.json.mbt 是否真接上 moon 工具链（四项）
 ```
 
 `-o -` = 产物改道 stdout（build/import 通用；与 `--check`/`--fmt` 互斥——两者都是盘面语义）。CI 验证 build 链通不通用 `-o - | md5sum` 或 shell 层丢弃——**别用 `-o nul`**（挂 rename 语义报错）。
@@ -27,21 +30,28 @@ rc 语义：`0` ok / `1` 输入错 / `2` 漂移（--check）/ `4` 用法错。CI
 
 ## 手写规则（子集边界——工具会在报错里重申，但前置知道少走弯路）
 
-1. **类型即 Schema**：`struct` 定义即数据形状；`Option[T]` 字段 = 可空（`null` ↔ `None`）。改数据先看 struct；
+1. **类型即 Schema**：`struct` 定义即数据形状；可空字段写后缀糖 `T?`（`null` ↔ `None`）——**`Option[T]` 前缀形态被 J2007 拒**（合法写法只有 `T?`，J2007 help 文案已对齐）。改数据先看 struct；
+1a. **保留字字段名**（#13）：JSON 键是 MoonBit 保留字（`where`/`type`…）时 import 自动改名（`where_`）并在产物头发 `// jsonmbt: field-alias Struct.label = "原键"` 注记，build/check 按注记还原 JSON 键；**手写文件也可用该注记**表达保留字键对象（注记行文法错/指向不存在的 struct 或字段/恒等注记 = J3009 fail loud）；
 2. **一个文件一个顶层文档**：`foo.json.mbt` 内有且只有一个 `pub let foo : ...`——**绑定名必须等于文件 stem**（J2003 会指路）；
-3. **键集不齐的数组用带参 enum**（D-5）：每种键集一个 struct，`enum Case { A(Ax); B(Bx) }`，字面量 `A(Ax::{ field: value })`。降级投影 = tag 对象展开（payload 进顶层 + `"case"` tag 键）；**payload 字段禁止叫 `case`**（J3008 显式拒）；
-4. **import 不自动转缺键异构**（J4010/J4011 fail loud）——拼错字段名与真可选无法区分，自动推断会把数据错误静默类型化。遇拒看报错里的字段集差异与分布计数，手工建模 enum 或补齐键；
+3. **键集不齐的数组用带参 enum**（D-5）：每种键集一个 struct，`enum Case { A(Ax); B(Bx) }`，字面量 `A(Ax::{ field: value })`。降级投影 = tag 对象展开（payload 进顶层 + `"case"` tag 键）；**payload 字段禁止叫 `case`**（J3008 显式拒）；**payload 形参也可以是 enum 名**（`enum Field { Named(Col) }` + `Named(X)`——标量 payload 走 `{"case":…,"value":…}` 形态）；已知面：struct payload 含 `value` 字段展平后与标量 payload 的 `value` 键同形（J3008 只防 `case` 不防 `value`——实际可由 case 值区分，登记不修）；
+4. **import 不自动转缺键异构**（J4010/J4011 fail loud）——拼错字段名与真可选无法区分，自动推断会把数据错误静默类型化。遇拒看报错里的字段集差异与分布计数（**按容器路径分组**：`at $.entries[]: N distinct key sets…`——顶层不再与数组元素混计；计数是**下界**，扫描在首个冲突合并处短路），手工建模 enum 或补齐键；
 5. **长文本用 `#|` 多行字符串**（D-12）——中文长描述不用拼 `\n`；
 6. **大数 >Int64 拒收**（J4020）：降级要求无损——要保留超长数字请以 String 字段承载；
 7. **全 null 列无法推断类型**（J4003）：至少给一个非 null 样本，或手工把字段建成 `Option[T]`；
 8. **注释与尾逗号天然合法**——这是相对 JSON 的核心书写优势，用真注释写「这字段为什么存在」。
+
+## 迁移面（批量场景）
+
+1. **第一入口 = `jsonmbt migrate [dir]`**：三榜侦察（BYTE-EQ 可直进 CI 对账 / VALUE-EQ 值等仅风格差须确认字节口径 / REJECT 带 J 码原因）——别再手写「逐张 import → cmp → 分类」shell 脚本；默认零写，`--write` 才落盘非 reject 产物；
+2. **撞名前缀化**：同目录多文件嵌套 struct 重名时后来者加 stem 前缀（`Id` → `BId`）——migrate 报告会 note 指路；语义命名入口 = `--type-name-map`（键 = 产物里的最终派生名，逐条改语义名）；
+3. **接入诊断**：迁移完先跑 `jsonmbt doctor [dir]`——「文件在不在 moon 包边界内、有没有真被编译」是返工两轮换来的最大坑（moon 看不见 = 验证了没被编译的东西）。
 
 ## 机器写回（emitter）纪律
 
 1. **程序生成别走 import**——import 是人的迁移工具；直接产 .mbt 文本 + `jsonmbt build` 验证；
 2. **Map 键序由 .mbt 文本序决定**：从 Go map range 直接输出会翻车（遍历序随机）——必须原文顺序抽取或显式排序，否则确定性破功；
 3. **round-trip 是链路语义闸，必跑——但「round-trip 绿 ≠ 数据语义正确」**：它防的是**链路引入的漂移**（emitter 装错变体、编解码不对称、归一化丢信息——build 再生对拍即红）；**不防**：①手写源头错（靠 freeze diff 人审）②值超域（99999 稳定往返 99999，绿——需消费侧 guard 或值域校验）。另一个第二用途：emitter 形态版本升级时，round-trip 可证「纯形态重构、语义零变化」；
-4. **fmt-stable**：import 用 `--fmt` 旗标（内部 spawn `moon fmt <单文件>`，无 workspace 副作用）；程序 emitter 同款——落盘后对产物单文件跑 `moon fmt`，不要对整个目录跑（会重排无关源文件）。**`--fmt` 前提 = 产物目录向上可达 moon workspace 根**（moon fmt 单文件只认 workspace 覆盖，盲区文件 moon 自报 `not in a Moon project` 退非零）；**fmt 失败 = 产物保留未 fmt 形态 + rc=4**（半成功态：脚本按 rc 判红，产物留现场供排查，别删也别信其形态）。
+4. **fmt-stable**：import 用 `--fmt` 旗标（内部 spawn `moon fmt <单文件>`，无 workspace 副作用）；程序 emitter 同款——落盘后对产物单文件跑 `moon fmt`，不要对整个目录跑（会重排无关源文件）。**`--fmt` 前提 = 产物目录向上可达 moon workspace 根**（moon fmt 单文件只认 workspace 覆盖，盲区文件 moon 自报 `not in a Moon project` 退非零）；**跨项目 fmt 唯一可靠形态 = `cd <目标项目> && moon fmt`**——`moon fmt <path>` 把 path 当「当前项目内的包过滤 pattern」，项目外/非包路径**静默跳过且 rc=0**（陷阱 #45）；**fmt 失败 = 产物保留未 fmt 形态 + rc=4**（半成功态：脚本按 rc 判红，产物留现场供排查，别删也别信其形态）。
 
 ## Agent 协作纪律（下游仓收录时抄这段）
 
@@ -55,10 +65,13 @@ rc 语义：`0` ok / `1` 输入错 / `2` 漂移（--check）/ `4` 用法错。CI
 | 码 | 含义 | 处置 |
 |---|---|---|
 | J2003 | 绑定名 ≠ 文件 stem | 改绑定名或文件名 |
-| J3004 | 字段类型不配 | 按 expects/got 修字面量 |
-| J3006 | record 缺必填字段 | 补字段（Option 字段写 `None`） |
-| J3008 | tag 键与 payload 字段撞车 | payload 字段改名 |
+| J2007 | 字段类型超出 L0（含 `Option[T]` 前缀写法） | 可空一律写后缀糖 `T?` |
+| J3004 | 字段类型不配 | 按 expects/got 修字面量（enum 变体拼错也在此） |
+| J3006 | record 缺必填字段 | 补字段（`T?` 字段写 `None`） |
+| J3008 | tag 键与 payload 字段撞车 | payload 字段改名（只防 `case`；`value` 是登记的已知面） |
+| J3009 | field-alias 注记畸形/语义错 | 按行文法修：`// jsonmbt: field-alias S.label = "json键"` |
+| J1010 | --type-name-map 值非法/撞已占类型 | 值改合法且未占的大写开头类型名 |
 | J4002 | 空对象无从推断 | 至少一个字段，或手工建模 |
-| J4003 | 全 null 列类型未知 | 给非 null 样本或手工 `Option[T]` |
-| J4010/J4011 | import 遇缺键异构 | 看 D-5 字段集差异报告，手工建模 enum |
+| J4003 | 全 null 列类型未知 | 给非 null 样本或手工 `T?` |
+| J4010/J4011 | import 遇缺键异构（按容器路径分组报告） | 看字段集差异与分布（下界），手工建模 enum |
 | J4020 | 整数超 Int64 | 改 String 字段承载 |

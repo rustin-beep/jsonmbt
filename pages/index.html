@@ -259,6 +259,7 @@ const EAT = [
   ['浮点形态保真', '数值文本原样直传；1e10 降级规范化为 1.0e10（N 层 1≡1.0 值等价）', '{"pi": 3.14159, "neg": -0.5, "exp": 1e10}'],
   ['空数组两级启发', '孤立空数组本会拒；同文件他处同名非空字段给元素类型线索（D-1）', '{"list": [], "nested": {"list": [1, 2]}}'],
   ['emoji / 中文零转义', '降级输出 UTF-8 原样，无 \\uXXXX 噪音', '{"emoji": "🚀 中文"}'],
+  ['保留字字段名（where）', 'MoonBit 保留字键自动改名 where_ 并发 field-alias 注记，build 按注记还原原键（往返无损）', '{"rules": [{"where": ".btn", "targets": ["btn-primary"]}]}'],
 ];
 const REJECT = [
   ['异构数组', '元素类型不相容（拼错 vs 异构无解，J4010）', '{"rows": [1, "a"]}'],
@@ -274,6 +275,7 @@ const MBT = [
   ['Option：None ↔ null', '后缀糖 T? 即 Option[T]；None 降级 null（无损直译），Some("x") 降级 "x"', 'struct S {\n  nick : String?\n}\npub let s : S = S::{ nick: Some("x") }'],
   ['#| 多行字符串', '长中文文本不拼 \\n，降级行净内容以 \\n 连接', 'pub let doc : String = #|\n#| 第一行\n#| 第二行'],
   ['注释与尾逗号丢弃', '.json.mbt 侧天然合法；降级为纯 JSON 时注释消失（写「为什么」不进产物）', 'pub let s = {\n  "a": 1, // 会消失\n}'],
+  ['嵌套 enum payload', 'payload 形参也可以是 enum 名——Named(Col) 收字面量 Named(X)，降级 {"case":"Named","value":"X"}', 'enum Col {\n  X\n}\nenum Field {\n  Named(Col)\n}\npub let f : Field = Named(X)'],
 ];
 
 function fill(id, items, side) {

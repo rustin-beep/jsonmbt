@@ -15,6 +15,7 @@ const EAT = [
   '{"pi": 3.14159, "neg": -0.5, "exp": 1e10}',
   '{"list": [], "nested": {"list": [1, 2]}}',
   '{"emoji": "🚀 中文"}',
+  '{"rules": [{"where": ".btn", "targets": ["btn-primary"]}]}',
 ];
 const REJECT = [
   ['{"rows": [1, "a"]}', 'J4010'],
@@ -30,6 +31,7 @@ const BUILD = [
   ['Option（index 卡逐字同步）', 'struct S {\n  nick : String?\n}\npub let s : S = S::{ nick: Some("x") }', r => r.ok && r.json === '{"nick":"x"}'],
   ['Option None→null（语义专断）', 'struct S {\n  nick : String?\n}\npub let s : S = S::{ nick: None }', r => r.ok && r.json === '{"nick":null}'],
   ['多行字符串', 'pub let doc : String = #|\n#| 第一行\n#| 第二行', r => r.ok && r.json.includes('第一行')],
+  ['嵌套 enum payload（index 卡逐字同步）', 'enum Col {\n  X\n}\nenum Field {\n  Named(Col)\n}\npub let f : Field = Named(X)', r => r.ok && r.json === '{"case":"Named","value":"X"}'],
   ['注释尾逗号丢弃', 'pub let s = {\n  "a": 1, // 会消失\n}', r => r.ok && r.json === '{"a":1}'],
 ];
 
@@ -49,5 +51,13 @@ for (const [name, s, ok] of BUILD) {
 // repr 保真专断（两段式：import content → build json）
 const i64 = JSON.parse(js_build(JSON.parse(js_import('{"id": 9007199254740993}', 'demo')).content));
 if (!(i64.ok && i64.json === '{"id":9007199254740993}')) { bad++; console.log('Int64 repr FAIL:', JSON.stringify(i64).slice(0, 120)); }
-console.log(bad === 0 ? 'SMOKE ALL OK (eat 10 + reject 7 + build 5 + i64 1)' : 'SMOKE BAD=' + bad);
+// 保留字往返专断（#13：EAT 末卡的语义断言——改名+注记+键还原）
+const rk = JSON.parse(js_import(EAT[10], 'demo'));
+const rkOk = rk.ok && rk.content.includes('// jsonmbt: field-alias Where.where_ = "where"') && rk.content.includes('where_ : String');
+if (!rkOk) { bad++; console.log('reserved-key import FAIL:', JSON.stringify(rk).slice(0, 160)); }
+else {
+  const rkBuilt = JSON.parse(js_build(rk.content));
+  if (!(rkBuilt.ok && rkBuilt.json === '{"rules":[{"where":".btn","targets":["btn-primary"]}]}')) { bad++; console.log('reserved-key roundtrip FAIL:', JSON.stringify(rkBuilt).slice(0, 160)); }
+}
+console.log(bad === 0 ? 'SMOKE ALL OK (eat 11 + reject 7 + build 6 + i64 1 + reserved-key 1)' : 'SMOKE BAD=' + bad);
 if (bad) process.exit(1); // 部署门契约：断言红 = rc 1（pages.yml 据此阻断 deploy）

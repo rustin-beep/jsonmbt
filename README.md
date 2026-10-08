@@ -51,11 +51,16 @@ $ jsonmbt build examples/server.json.mbt
 MOON_CC=clang moon build          # 产物在 _build/native/*/build/cmd/jsonmbt/
 ```
 
-CLI 当前动词面（P1）：`build` 与 `check`。
+CLI 五动词：`build` / `check` / `import` / `doctor` / `migrate`。
 
 ```bash
 jsonmbt build <file.json.mbt...> [-o <out.json>|-] # 降级输出，默认同名 .json；-o - 走 stdout
 jsonmbt check <file.json.mbt...>                   # 只校验不产出（= build 的 dry-run，不含降级链）
+jsonmbt import <file.json> [-o x.json.mbt] [--check|--fmt|--type-name-map m.json]
+                                                   # JSON → .json.mbt（形状推断）；--check 幂等闸（rc=2 漂移）
+                                                   # --type-name-map 把机器派生名（Id/File2…）改成语义名
+jsonmbt migrate <dir> [--write]                    # 批量迁移侦察：三榜报告（BYTE-EQ/VALUE-EQ/REJECT）；默认零写
+jsonmbt doctor [dir]                               # 只读诊断：.json.mbt 是否真接上 moon 工具链（rc 1=挡住）
 jsonmbt build - < in.json.mbt                      # stdin 进，stdout 出
 ```
 
@@ -84,7 +89,7 @@ jsonmbt: error [J3004] examples/server.json.mbt:9:9 expects Int, got String lite
 
 ## importer（已落地）
 
-`jsonmbt import x.json` 将从 JSON 反推 `struct` 头 + 直译值，生成合法 `.json.mbt`——存量 JSON 资产的迁移入口。P0 探针已用合成矩阵与真实数据完成实证（含 2,469 张冻结档案压测，未判形态全部落在已知逃生门内，详见 [PLAN §9](docs/PLAN.md)）。
+`jsonmbt import x.json` 将从 JSON 反推 `struct` 头 + 直译值，生成合法 `.json.mbt`——存量 JSON 资产的迁移入口。真实数据形态的确定性出路：**保留字字段名**（`where`）自动改名 + `field-alias` 注记往返还原；**键集漂移**数组按 D-5 手工建模 enum；批量场景用 **`jsonmbt migrate`** 三榜侦察（能直进 CI 对账的 / 仅风格差的 / 拒收带原因的）先探后迁。P0 探针已用合成矩阵与真实数据完成实证（含 2,469 张冻结档案压测，未判形态全部落在已知逃生门内，详见 [PLAN §9](docs/PLAN.md)）。
 
 ## 在你的仓里接入（moon 静态门禁）
 
@@ -98,6 +103,8 @@ jsonmbt import data/config.json      # 1. 转换（产物同目录同名 .json.m
 printf '\n' > data/moon.pkg          # 2. 声明包边界（空块，1 字节换行）
 moon fmt data && moon check          # 3. 归一 + 检查（此步会真的拦下类型错）
 ```
+
+不确定接没接对？`jsonmbt doctor [dir]` 一次说清——包边界 / 跨文件撞名 / check·build / fmt 稳定四项逐文件报告（全程只读，任一项不接即 rc 1）。
 
 多模块仓在仓根加 `moon.work`，一条 `moon check` 覆盖全部；CI 里 `moon check` 放在
 `jsonmbt build` **之前**。完整接法、CI 接线片段、注入测试法（怎么证明门禁真的会红）、
@@ -128,7 +135,7 @@ MOON_CC=clang moon build --target native --release
 | ✅ P0 | 探针：生态扫描 / 行为矩阵 / importer 三映射 / 真实数据压测 |
 | 🟡 P1 | L0 校验器 + 降级器 + CLI（build/check）——**主体已落地**，余项随 P1.5 收口 |
 | ✅ P1.5 主体 | importer v1 + `--check` 幂等闸 + 层 2 Go 黑盒驱动（余项：mooncakes 发包 / Vitro 试点） |
-| P2 | npm 包（js 出口）+ 在线试玩页 + `jsonmbt schema` 导出 |
+| P2 | npm 包（js 出口）+ `jsonmbt schema` 导出（**在线试玩页已上线**：[playground](https://rustin-beep.github.io/jsonmbt/)，CI 自动构建部署） |
 | P3 | L1/L2 求值分级 + diff 模式 |
 
 进度细节以 [PLAN §5 里程碑表](docs/PLAN.md)为唯一载体——本表只是导览。
