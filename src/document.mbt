@@ -294,7 +294,7 @@ fn scan_supported_type(t : JType, loc : @basic.Location) -> Unit raise Diag {
         loc~,
         message="field type is outside the L0 subset",
         help=Some(
-          "supported field types: Int/Int64/Double/String/Bool/Option[T]/Array[T]/Map[String,T]/struct",
+          "supported field types: Int/Int64/Double/String/Bool/T? (Option)/Array[T]/Map[String,T]/struct",
         ),
         path="",
       )

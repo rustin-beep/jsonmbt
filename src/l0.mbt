@@ -232,7 +232,7 @@ fn l0_expr(
                   other.show(),
                   "Some(...)",
                   help=Some(
-                    "wrap values in Some(...) only for Option[T] fields",
+                    "wrap values in Some(...) only for T? (Option) fields",
                   ),
                 )
               None => l0_expr(env, enums, v, None, depth + 1)
@@ -679,7 +679,7 @@ fn l0_record(
             code=JMissingField,
             loc~,
             message="missing field '\{f.0}' in '\{d.name}'",
-            help=Some("provide the field explicitly; Option[T] fields use None"),
+            help=Some("provide the field explicitly; T? (Option) fields use None"),
             path="",
           )
         }

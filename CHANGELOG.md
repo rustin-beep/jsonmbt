@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+### Fixed（issue #15：J2007 help 文案与实现对齐）
+
+- J2007/J4003/J3004/J3006 四处 help 文案的 `Option[T]` → `T? (Option)`——Option 的合法写法是 MoonBit 后缀糖 `T?`（前缀形态 `Option[Int]` 被 parse 判 JTUnsupported 拒收），文案列 `Option[T]` 为 supported 是指路被拒写法（pages playground 样例卡实测发现）。方案 A（改文案）；方案 B（放开前缀别名）按 issue 论证不做（引出产物 fmt 形态问题）
+- 层 1 两处逐字节锚先行红（negative_test 115/208）→ 绿 87/87；层 2 新增 `j2007-help-text` stderr 逐字节 golden，23/23 绿
+
 ### Added（pages 体验：加载等待提示 + README 直入标签）
 
 - `pages/index.html`：引擎改**动态 `import()`**——静态 import 会把整个交互脚本卡在 ffi.js（~7.8MB）下载期（输入框可见但零反馈）；现先绑 UI 并显示「⏳ 引擎加载中」状态（新 `#status.loading` 样式），就绪后自动跑初始转换，失败显式报错（网络/GitHub Pages 分发问题可诊断）；下载期间的手动转换提示「将在就绪后自动执行」

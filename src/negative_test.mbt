@@ -112,7 +112,7 @@ test "J2007 : 字段类型超出 L0 支持面" {
     #|
     #|pub let t : T = T::{ a: (1, 2) }
   expect_diag(
-    src, "jsonmbt: error [J2007] t.json.mbt:2:3 field type is outside the L0 subset\n  help: supported field types: Int/Int64/Double/String/Bool/Option[T]/Array[T]/Map[String,T]/struct",
+    src, "jsonmbt: error [J2007] t.json.mbt:2:3 field type is outside the L0 subset\n  help: supported field types: Int/Int64/Double/String/Bool/T? (Option)/Array[T]/Map[String,T]/struct",
   )
 }
 
@@ -205,7 +205,7 @@ test "J3006 : 缺必填字段" {
     #|  a: 1,
     #|}
   expect_diag(
-    src, "jsonmbt: error [J3006] t.json.mbt:6:17 missing field 'b' in 'T'\n  help: provide the field explicitly; Option[T] fields use None",
+    src, "jsonmbt: error [J3006] t.json.mbt:6:17 missing field 'b' in 'T'\n  help: provide the field explicitly; T? (Option) fields use None",
   )
 }
 

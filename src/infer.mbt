@@ -842,7 +842,7 @@ fn all_null_diag(ctx : InferCtx, label : String) -> Diag raise Diag {
     loc=dummy_loc(),
     message="all samples are null: Option base type unknown ('\{label}')",
     help=Some(
-      "provide one non-null sample, or hand-model the field as Option[T]",
+      "provide one non-null sample, or hand-model the field as T? (Option)",
     ),
     path=ctx.fname,
   )

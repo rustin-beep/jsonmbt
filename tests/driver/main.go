@@ -768,6 +768,26 @@ func caseMigrate(exe, dir string) error {
 	return nil
 }
 
+// j2007-help-text（#15）：help 文案与实现对齐锚——Option 的合法写法是
+// 后缀糖 T?（Option[Int] 前缀形态被 parse 判 JTUnsupported 拒收），文案
+// 必须指路真实语法，逐字节 golden。
+func caseJ2007HelpText(exe, dir string) error {
+	writeFile(dir, "s.json.mbt", "struct S {\n  n : Option[Int]\n}\npub let s : S = S::{ n: None }\n")
+	rc, _, stderr, err := runExe(exe, dir, "check", "s.json.mbt")
+	if err != nil {
+		return err
+	}
+	if rc != 1 {
+		return fmt.Errorf("rc = %d, want 1", rc)
+	}
+	want := []byte("jsonmbt: error [J2007] s.json.mbt:2:3 field type is outside the L0 subset\n" +
+		"  help: supported field types: Int/Int64/Double/String/Bool/T? (Option)/Array[T]/Map[String,T]/struct\n")
+	if !bytes.Equal(stderr, want) {
+		return fmt.Errorf("stderr 逐字节不符（#15 文案对齐）：\n--want--\n%q\n--got--\n%q", want, stderr)
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"probe-samples-golden", caseProbeSamples},
@@ -791,6 +811,7 @@ var cases = []testCase{
 	{"doctor-readonly", caseDoctorReadonly},
 	{"type-name-map", caseTypeNameMap},
 	{"migrate-three-boards", caseMigrate},
+	{"j2007-help-text", caseJ2007HelpText},
 }
 
 func defaultExe() string {
