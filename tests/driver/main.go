@@ -877,6 +877,50 @@ func caseNeverPlaceholder(exe, dir string) error {
 	return nil
 }
 
+// fill（#14-2b）：按已声明类型重算值体——头逐字节保留、键集漂移按声明
+// enum 消歧（tag/键集双形态）、--fill --check 分档闸（源变 rc2）、互斥拒。
+func caseFill(exe, dir string) error {
+	writeFile(dir, "t.json.mbt", "enum Case {\n  A(Ax)\n  B(Bx)\n}\nstruct Ax {\n  a : Int\n}\nstruct Bx {\n  b : Int\n}\nstruct T {\n  xs : Array[Case]\n}\n\n// hand-renamed header comment must survive\npub let t : T = T::{\n  xs: [],\n}\n")
+	writeFile(dir, "t.json", `{"xs": [{"a": 1}, {"b": 2}]}`)
+	if rc, _, _, err := runExe(exe, dir, "import", "t.json", "--fill", "t.json.mbt"); err != nil || rc != 0 {
+		return fmt.Errorf("fill rc=%d err=%v", rc, err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "t.json.mbt"))
+	s := string(got)
+	// 头逐字节保留（人工注释存活）+ 消歧值体
+	if !strings.Contains(s, "// hand-renamed header comment must survive") {
+		return fmt.Errorf("头部人工内容丢失:\n%s", s)
+	}
+	if !strings.Contains(s, "A(Ax::{ a: 1 }),") || !strings.Contains(s, "B(Bx::{ b: 2 }),") {
+		return fmt.Errorf("消歧值体缺失:\n%s", s)
+	}
+	// 同步 → check rc0
+	if rc, _, _, err := runExe(exe, dir, "import", "t.json", "--fill", "t.json.mbt", "--check"); err != nil || rc != 0 {
+		return fmt.Errorf("--check 同步应 rc0: rc=%d err=%v", rc, err)
+	}
+	// 源变 → rc2 J5001（分档闸有牙）
+	writeFile(dir, "t.json", `{"xs": [{"a": 9}]}`)
+	if rc, _, stderr, _ := runExe(exe, dir, "import", "t.json", "--fill", "t.json.mbt", "--check"); rc != 2 || !bytes.Contains(stderr, []byte("[J5001]")) {
+		return fmt.Errorf("源变应 rc2 J5001: rc=%d stderr=%q", rc, stderr)
+	}
+	// tag 形态输入（fill 吃自身降级产物）+ -o - 预览
+	writeFile(dir, "t.json", `{"xs": [{"case": "B", "b": 7}]}`)
+	rc, out, _, err := runExe(exe, dir, "import", "t.json", "--fill", "t.json.mbt", "-o", "-")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("预览 rc=%d err=%v", rc, err)
+	}
+	if !strings.Contains(string(out), "B(Bx::{ b: 7 })") {
+		return fmt.Errorf("tag 消歧预览缺失:\n%s", out)
+	}
+	// 互斥：--fill + --type-name-map → J0001
+	writeFile(dir, "m.json", `{"Id":"X"}`)
+	writeFile(dir, "t.json", `{"xs": []}`)
+	if rc, _, stderr, _ := runExe(exe, dir, "import", "t.json", "--fill", "t.json.mbt", "--type-name-map", "m.json"); rc != 4 || !bytes.Contains(stderr, []byte("[J0001]")) {
+		return fmt.Errorf("互斥应 J0001 rc4: rc=%d stderr=%q", rc, stderr)
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"probe-samples-golden", caseProbeSamples},
@@ -903,6 +947,7 @@ var cases = []testCase{
 	{"j2007-help-text", caseJ2007HelpText},
 	{"migrate-taken-twins", caseMigrateTakenTwins},
 	{"never-placeholder", caseNeverPlaceholder},
+	{"fill", caseFill},
 }
 
 func defaultExe() string {

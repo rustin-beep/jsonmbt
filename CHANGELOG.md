@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added（issue #14 批次 2b：`--fill` 按已声明类型重算值体 + 分档闸）
+
+- `import x.json --fill x.json.mbt`——第三条注记通道（类型定义本身）落地：读已有产物的类型头（analyze：structs/enums/field-alias 注记全收），**以声明类型驱动渲染源 JSON 值体**——空容器直吃声明元素类型（不再 Never/启发）、键集漂移按声明 enum 消歧（`case` tag 键或键集精确匹配双形态——fill 能吃自身降级产物，round-trip 闭环）；无匹配变体 J3004、键集多余/缺失 J3005/J3006（数据不同步不吞错）
+- **头逐字节保留**：切分点 = `pub let` 行内首个 ` = `（注解属类型头）——人工改名、新增 struct、手写注释全部存活（层 2 断言）
+- `--fill --check` **分档幂等闸**：头保留语境下校验值体与源 JSON 同步（源变 rc 2 J5001）——不再惩罚人工语义命名（与 `--type-name-map` 双通道共存）
+- `-o -` 预览；`--type-name-map`/`--strict` 与 fill 互斥（语义不交集，J0001 fail loud）
+- 渲染器 `strict_keys` 参数化（一套双模式，import 主路径零变化）；`fill_source` 出口（moon info 登记）
+- 层 1 94/94（fill 三用例：直填/消歧双形态/负样本）、层 2 26/26（fill 用例：头保留/同步 rc0/源变 rc2/预览/互斥）
+
 ### Added（issue #14 批次 1+2a：T?? 收窄 + 空容器 Never 占位）
 
 - **T?? 递归收窄 J2007**（批次 1）：实测 `String??` 下 `None` 与 `Some(None)` 降级都成 `"a":null`——静默压平违反 §0 无损与 D-8 ②；`scan_supported_type` 嵌套 Option 分支 fail loud（任意深度递归拒，J2007 专属文案指向三态评审状态）。推断链只加一层 Option——**纯手写面，现存绿文件零影响**（层 1 三形态锚 + 层 2 golden 双证）。三态展平式（None=缺席/Some(None)=null/值）走 §8 评审；容器位（Map 值/数组元素）结构上无法缺席，评审落地前一并收窄

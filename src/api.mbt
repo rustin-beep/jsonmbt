@@ -201,3 +201,81 @@ pub fn json_value_eq(a : Json, b : Json) -> Bool {
     _ => false
   }
 }
+
+///|
+/// 按已声明类型重算值体（#14-2b --fill）：读已有 .json.mbt 产物的类型头
+/// （struct/enum/注解/别名全收），以声明类型驱动渲染源 JSON 的值体——
+/// 空容器直吃声明元素类型（不再 Never/启发）、键集漂移按声明 enum 消歧
+/// （tag 键或键集精确匹配）。**头逐字节保留**（切分点 = pub let 行内首个
+/// ` = `——注解属类型头），只重写值体。与 --check 幂等闸同源（都读盘上
+/// 产物），不引入新文件形态/新语法（第三条注记通道 = 类型定义本身）
+pub fn fill_source(
+  json_text : String,
+  existing_src : String,
+  path? : String = "<json>",
+  fill_path? : String = "",
+  stem~ : String,
+) -> String raise Diag {
+  let stem = sanitize_stem(stem)
+  let root = json_parse(strip_jsonc(json_text), fname=path)
+  // 既有产物必须先过自家校验（合法 .json.mbt 才有可用的类型头）
+  let expected_name = Some(stem)
+  let doc = analyze(existing_src, path=fill_path, expected_name?)
+  let root_ty : JType? = match doc.root_ty {
+    Some(t) => Some(resolve_custom(doc.structs, doc.enums, t))
+    None => None
+  }
+  // 渲染上下文：struct 表（label,ty）+ alias 表（从 StructDef.aliases 收）
+  let table : StructTable = Map([])
+  let aliases : Array[(String, String, String)] = []
+  doc.structs.each(fn(_, d) {
+    let fields : Array[(String, JType)] = []
+    for f in d.fields {
+      fields.push((f.0, resolve_custom(doc.structs, doc.enums, f.1)))
+    }
+    table[d.name] = fields
+    d.aliases.each(fn(label, key) {
+      aliases.push((d.name, label, key))
+    })
+  })
+  let atab = build_alias_table(aliases)
+  let value = render_top_value(
+    table,
+    atab,
+    root,
+    root_ty,
+    enums=doc.enums,
+    strict_keys=true,
+  )
+  // 切分：pub let 行内首个 " = "（其前一切逐字节保留——头注释/注记/
+  // 全部类型定义含人工改名与新加 struct）
+  let marker = existing_src.find("\npub let ")
+  let let_start = match marker {
+    Some(i) => i + 1
+    None =>
+      // 文件首行就是 pub let（无类型头的极端形态）
+      if existing_src.has_prefix("pub let ") {
+        0
+      } else {
+        raise Diag(
+          code=JNoDoc,
+          loc=dummy_loc(),
+          message="no top-level pub let binding to fill",
+          help=Some("the fill target must contain the value body after `pub let ... = `"),
+          path=fill_path,
+        )
+      }
+  }
+  let eq = match existing_src[let_start:].to_owned().find(" = ") {
+    Some(i) => let_start + i + 3
+    None =>
+      raise Diag(
+        code=JNoDoc,
+        loc=dummy_loc(),
+        message="cannot locate the ` = ` after the pub let binding",
+        help=Some("fill rewrites everything after the first top-level ` = `"),
+        path=fill_path,
+      )
+  }
+  existing_src[:eq].to_owned() + value + "\n"
+}

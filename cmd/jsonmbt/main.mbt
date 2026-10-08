@@ -50,6 +50,7 @@ fn usage() -> Int {
     "  jsonmbt build <file.json.mbt...|-> [-o <out.json>|-]\n" +
     "  jsonmbt check <file.json.mbt...|->\n" +
     "  jsonmbt import <file.json|-> [-o <out.json.mbt>|-] [--check] [--fmt] [--type-name-map <map.json>] [--strict]\n" +
+    "  jsonmbt import <file.json> --fill <file.json.mbt> [--check] — refill the value body from the declared type header\n" +
     "  jsonmbt doctor [dir] — read-only diagnosis: is this repo's .json.mbt really wired into moon?\n" +
     "  jsonmbt migrate [dir] [--write] — batch scout: byte-eq / value-eq / reject report per .json\n" +
     "degrade: .json.mbt -> .json (deterministic, compact); `-` reads stdin, `-o -` writes to stdout\n" +
@@ -531,6 +532,7 @@ fn main_rc() -> Int {
   let mut do_indent : Int? = None // --pretty 缩进宽度（#6-1）；None = 未给（提示判据）
   let mut type_map_path : String? = None // import --type-name-map <file>（#6-4）
   let mut do_strict = false // import --strict（#14-2a）：空容器严格档（如旧 J4001/J4002 拒）
+  let mut fill_path : String? = None // import --fill <file>（#14-2b）：按已声明类型重算值体
   let mut i = 2
   while i < args.length() {
     let a = args[i]
@@ -576,6 +578,15 @@ fn main_rc() -> Int {
     } else if a == "--strict" {
       do_strict = true
       i = i + 1
+    } else if a == "--fill" {
+      if i + 1 >= args.length() {
+        return jdiag_exit(
+          @src.JUsage,
+          "--fill requires an existing .json.mbt file (its type header is reused)",
+        )
+      }
+      fill_path = Some(args[i + 1])
+      i = i + 2
     } else if a == "--type-name-map" {
       if i + 1 >= args.length() {
         return jdiag_exit(
@@ -620,6 +631,22 @@ fn main_rc() -> Int {
         "--indent applies to build only (import output shape is generator-defined)",
       )
     }
+    // #14-2b：--fill <file> = 按已声明类型重算值体（类型头逐字节保留）
+    if fill_path is Some(f) {
+      if type_map_path is Some(_) {
+        return jdiag_exit(
+          @src.JUsage,
+          "--fill reuses the declared type header — there are no derived names to map (--type-name-map is for plain import)",
+        )
+      }
+      if do_strict {
+        return jdiag_exit(
+          @src.JUsage,
+          "--strict tunes empty-container inference; --fill skips inference entirely",
+        )
+      }
+      return run_fill(paths[0], f, out_opt, do_check, do_fmt)
+    }
     // #6-4：--type-name-map 是 import 专属（build/check 侧先拒——下方
     // 共享解析循环收 flag，非 import verb 到达此处即误用）
     let type_map : Map[String, String] = match type_map_path {
@@ -638,6 +665,9 @@ fn main_rc() -> Int {
   // import 专属 flag 出现在其他 verb = 误用（fail loud，防静默无效参数）
   if type_map_path is Some(_) {
     return jdiag_exit(@src.JUsage, "--type-name-map applies to import only")
+  }
+  if fill_path is Some(_) {
+    return jdiag_exit(@src.JUsage, "--fill applies to import only")
   }
   if paths.length() > 1 && out_opt is Some(_) {
     return jdiag_exit(@src.JUsage, "-o accepts a single input")
@@ -733,6 +763,92 @@ fn run_one(
   }
   atomic_write(target, product) catch {
     e => if e is Diag(..) { return print_diag_exit(e) } else { return 4 }
+  }
+  0
+}
+
+///|
+/// --fill 执行路径（#14-2b）：读源 JSON + 盘上产物的类型头 → 声明类型驱动
+/// 渲染值体 → 头逐字节保留写回。--check = 分档幂等闸（头保留语境下的
+/// 值体同步校验：源 JSON 变了/声明字段无对应数据 → rc 2 J5001）
+fn run_fill(
+  path : String,
+  fill_target : String,
+  out_opt : String?,
+  check : Bool,
+  fmt : Bool,
+) -> Int {
+  let src = read_input(path) catch {
+    e =>
+      if e is @src.Diag(..) {
+        return print_diag_exit(e)
+      } else {
+        return jdiag_exit(@src.JIO, "cannot read '\{path}'")
+      }
+  }
+  let existing = @fs.read_file_to_string(fill_target) catch {
+    _ =>
+      return jdiag_exit(
+        @src.JIO,
+        "cannot read fill target '\{fill_target}'",
+        help=Some("--fill needs an existing .json.mbt whose type header is reused"),
+      )
+  }
+  let stem = match json_stem_of(path) {
+    Some(s) => s
+    None => return jdiag_exit(@src.JUsage, "'\{path}' has no usable stem")
+  }
+  let filled = @src.fill_source(
+    src,
+    existing,
+    path=path,
+    fill_path=fill_target,
+    stem~,
+  ) catch {
+    e =>
+      if e is @src.Diag(..) {
+        return print_diag_exit(e)
+      } else {
+        return jdiag_exit(@src.JIO, "internal: non-Diag error")
+      }
+  }
+  if check {
+    // 分档幂等闸：与盘上产物行尾归一后比对（同 import --check 口径）
+    let up_to_date = normalize_eol(filled) == normalize_eol(existing)
+    if up_to_date {
+      return 0
+    }
+    return jdiag_exit(
+      @src.JDrift,
+      "'\{fill_target}' value body is not up to date with '\{path}' (import --fill --check)",
+      help=Some("re-run: jsonmbt import \{path} --fill \{fill_target}"),
+    )
+  }
+  // 输出目标：-o - 预览（stdout）；-o <file> 另存；缺省写回 fill 目标自身
+  if is_dash_out(out_opt) {
+    write_product_stdout(filled)
+    return 0
+  }
+  let target = match out_opt {
+    Some(o) => o
+    None => fill_target
+  }
+  atomic_write(target, filled) catch {
+    e => if e is @src.Diag(..) { return print_diag_exit(e) } else { return 4 }
+  }
+  if fmt {
+    let cmd = "moon fmt \"\{target}\""
+    let bytes = @unicode.to_utf8_bytes(cmd)
+    let rc = jsonmbt_run_cmd(bytes, bytes.length())
+    if rc != 0 {
+      return jdiag_exit(
+        @src.JIO,
+        "moon fmt failed (rc=\{rc}) on '\{target}' — moon missing from PATH, or the file is outside any moon workspace (see moon's own error above)",
+        help=Some(
+          "--fmt failure keeps the unformatted product on disk; gate on rc (4 here), not on the product file",
+        ),
+      )
+    }
   }
   0
 }

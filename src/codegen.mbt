@@ -134,22 +134,123 @@ fn struct_field_type(
 }
 
 ///|
-/// 值渲染（期望类型驱动；嵌套一律内联单行）
+/// struct 的隐含 JSON 键集（label 经 alias 逆映射 = json 键；无注记则恒等）
+fn implied_json_keys(
+  atab : AliasTable,
+  sname : String,
+  labels : Array[String],
+) -> Array[String] {
+  // atab 键 = "sname\u{1}json键" → value = label；反查 label → json 键
+  let rev : Map[String, String] = Map([])
+  atab.each(fn(k, label) {
+    let sep = k.find("\u{1}")
+    match sep {
+      Some(i) =>
+        if k[:i].to_owned() == sname {
+          rev[label] = k[i + 1:].to_owned()
+        }
+      None => ()
+    }
+  })
+  labels.map(fn(l) {
+    match rev.get(l) {
+      Some(k) => k
+      None => l
+    }
+  })
+}
+
+///|
+/// fill 严格校验：JSON 键集必须与 struct 隐含键集精确一致（多余 J3005 /
+/// 缺失 J3006——「按已声明类型重算」语境下静默忽略 = 数据不同步吞错）
+fn strict_check_keys(
+  table : StructTable,
+  atab : AliasTable,
+  sname : String,
+  ks : Array[String],
+) -> Unit raise Diag {
+  let labels : Array[String] = []
+  match table.get(sname) {
+    Some(fs) => for f in fs {
+      labels.push(f.0)
+    }
+    None => ()
+  }
+  let implied = implied_json_keys(atab, sname, labels)
+  // 多余
+  for k in ks {
+    if !implied.contains(k) {
+      raise Diag(
+        code=JUnknownField,
+        loc=dummy_loc(),
+        message="unknown field '\{k}' — struct '\{sname}' declares: \{implied.join(", ")}",
+        help=Some("the source JSON has keys the declared type does not cover — update the struct header or the JSON"),
+        path="",
+      )
+    }
+  }
+  // 缺失
+  for k in implied {
+    if !ks.contains(k) {
+      raise Diag(
+        code=JMissingField,
+        loc=dummy_loc(),
+        message="missing field '\{k}' in '\{sname}' — declared in the type header but absent from the source JSON",
+        help=Some("fill only rewrites the value body; add the key to the JSON or drop it from the struct"),
+        path="",
+      )
+    }
+  }
+}
+
+///|
+/// 值渲染（期望类型驱动；嵌套一律内联单行）。strict_keys（#14-2b fill）：
+/// 声明类型语境——struct 键集精确校验 + enum 按键集/tag 选变体；缺省
+/// false = import 主路径现行为（推断产物与数据天然一致，无需校验）
 fn render_value(
   table : StructTable,
   atab : AliasTable,
   j : Json,
   ty : JType?,
+  enums? : Map[String, EnumDef] = Map([]),
+  strict_keys? : Bool = false,
 ) -> String raise Diag {
   match (j, ty) {
     (Null, _) => "None" // 自由 null；非 Option 期望在推断层不会出现（防御）
-    (v, Some(JTOption(t))) => "Some(\{render_value(table, atab, v, Some(t))})"
+    (v, Some(JTOption(t))) =>
+      "Some(\{render_value(table, atab, v, Some(t), enums~, strict_keys~)})"
     (True, _) => "true"
     (False, _) => "false"
     (Number(_, repr~), _) =>
       match repr {
         Some(t) => ensure_double_syntax(t)
         None => "0" // 自持解析器产物恒带 repr；防御
+      }
+    (String(s), Some(JTEnum(n))) if strict_keys =>
+      // fill：JSON 值 = 变体名字符串（D-5 无参变体的降级投影）→ 裸构造器
+      match enums.get(n) {
+        Some(def) =>
+          if def.variants.contains(s) {
+            s
+          } else {
+            raise Diag(
+              code=JFieldType,
+              loc=dummy_loc(),
+              message="enum '\{n}' has no variant '\{s}'",
+              help=Some("variants of '\{n}': \{def.variants.join(" ")}"),
+              path="",
+            )
+          }
+        None =>
+          raise Diag(
+            code=JFieldType,
+            loc=dummy_loc(),
+            message="enum '\{n}' is not defined in this file",
+            help=Some(
+              ".json.mbt is single-file; declare the enum alongside the structs",
+            ),
+            path="",
+          )
       }
     (String(s), _) => moonbit_escape(s)
     (Array(elems), t) => {
@@ -159,7 +260,7 @@ fn render_value(
       }
       let parts : Array[String] = []
       for e in elems {
-        parts.push(render_value(table, atab, e, elem_ty))
+        parts.push(render_value(table, atab, e, elem_ty, enums~, strict_keys~))
       }
       // #9 排版：≥2 元素逐元素折行（catalog 77 卡曾单行 13354 字符——一行
       // 改动整行 diff 换；折行后单卡行级 diff）；0/1 元素保持内联
@@ -177,15 +278,23 @@ fn render_value(
         "[\{parts.join(", ")}]"
       }
     }
+    (Object(o), Some(JTEnum(n))) if strict_keys =>
+      // fill：键集漂移消歧（#14-2b）——按 tag 键（降级产物形态）或键集
+      // 精确匹配选 payload 变体；无匹配 = J3004 fail loud（信息矛盾不该
+      // 静默选边）
+      fill_enum_variant(table, atab, enums, n, o)
     (Object(o), Some(JTStruct(name))) => {
       let entries : Array[String] = []
       let ks : Array[String] = []
       o.each(fn(k, _) { ks.push(k) })
+      if strict_keys {
+        strict_check_keys(table, atab, name, ks)
+      }
       for k in ks {
         let v = o.get(k).unwrap()
         let label = alias_field_label(atab, name, k)
         entries.push(
-          "\{label}: \{render_value(table, atab, v, struct_field_type(table, name, label))}",
+          "\{label}: \{render_value(table, atab, v, struct_field_type(table, name, label), enums~, strict_keys~)}",
         )
       }
       "\{name}::{ \{entries.join(", ")} }"
@@ -202,7 +311,7 @@ fn render_value(
       for k in ks {
         let v = o.get(k).unwrap()
         entries.push(
-          "\{moonbit_escape(k)}: \{render_value(table, atab, v, vt)}",
+          "\{moonbit_escape(k)}: \{render_value(table, atab, v, vt, enums~, strict_keys~)}",
         )
       }
       "{ \{entries.join(", ")} }"
@@ -211,23 +320,163 @@ fn render_value(
 }
 
 ///|
-/// 顶层值：struct record 多行（可读性）；其余形态内联
+/// fill 的 enum 变体消歧（#14-2b）：① o 含 "case" 字符串键（= 自身降级
+/// 产物形态）→ 按 tag 选变体，payload = 剥 tag 后的对象；② 无 tag →
+/// 键集与各 payload struct 的隐含键集精确匹配。选定后渲染
+/// `Var(Px::{...})`（payload 以声明 struct 期望递归 strict 渲染）
+fn fill_enum_variant(
+  table : StructTable,
+  atab : AliasTable,
+  enums : Map[String, EnumDef],
+  ename : String,
+  o : Map[String, Json],
+) -> String raise Diag {
+  let def = match enums.get(ename) {
+    Some(d) => d
+    None =>
+      raise Diag(
+        code=JFieldType,
+        loc=dummy_loc(),
+        message="enum '\{ename}' is not defined in this file",
+        help=Some(
+          ".json.mbt is single-file; declare the enum alongside the structs",
+        ),
+        path="",
+      )
+  }
+  let ks : Array[String] = []
+  o.each(fn(k, _) { ks.push(k) })
+  // ① tag 键指示（降级产物形态——fill 吃自己的产物，round-trip 闭环）
+  let variant : String? = match o.get("case") {
+    Some(String(tag)) =>
+      if def.payload_variants.contains(tag) {
+        Some(tag)
+      } else {
+        raise Diag(
+          code=JFieldType,
+          loc=dummy_loc(),
+          message="enum '\{ename}' has no payload variant '\{tag}'",
+          help=Some("payload variants: \{def.payload_variants.join(" ")}"),
+          path="",
+        )
+      }
+    _ => None
+  }
+  let payload_keys : Array[String] = ks.filter(fn(k) { k != "case" })
+  match variant {
+    Some(v) =>
+      render_variant_payload(
+        table,
+        atab,
+        enums,
+        def,
+        v,
+        payload_keys,
+        o,
+      )
+    None => {
+      // ② 键集精确匹配
+      for v in def.payload_variants {
+        let pty = def.payload_types.get(v)
+        match pty {
+          Some(JTStruct(px)) => {
+            let labels : Array[String] = []
+            match table.get(px) {
+              Some(fs) => for f in fs {
+                labels.push(f.0)
+              }
+              None => ()
+            }
+            let implied = implied_json_keys(atab, px, labels)
+            let same = payload_keys.length() == implied.length() &&
+              payload_keys.iter().all(fn(k) { implied.contains(k) })
+            if same {
+              return render_variant_payload(
+                table,
+                atab,
+                enums,
+                def,
+                v,
+                payload_keys,
+                o,
+              )
+            }
+          }
+          _ => ()
+        }
+      }
+      raise Diag(
+        code=JFieldType,
+        loc=dummy_loc(),
+        message="no variant of '\{ename}' matches key set { \{payload_keys.join(", ")} }",
+        help=Some(
+          "payload variants: \{def.payload_variants.join(" ")} — hand-pick by adding a \"case\" tag, or extend the enum",
+        ),
+        path="",
+      )
+    }
+  }
+}
+
+///|
+fn render_variant_payload(
+  table : StructTable,
+  atab : AliasTable,
+  enums : Map[String, EnumDef],
+  def : EnumDef,
+  v : String,
+  payload_keys : Array[String],
+  o : Map[String, Json],
+) -> String raise Diag {
+  let pty = def.payload_types.get(v)
+  match pty {
+    Some(JTStruct(px)) => {
+      // payload 对象（剥 tag 键）以声明 struct 期望 strict 递归
+      let inner : Map[String, Json] = Map([])
+      for k in payload_keys {
+        inner[k] = o.get(k).unwrap()
+      }
+      "\{v}(\{render_value(table, atab, Json::object(inner), pty, enums~, strict_keys=true)})"
+    }
+    Some(other) =>
+      // 标量 payload（case/value 形态）
+      "\{v}(\{render_value(table, atab, o.get(payload_keys[0]).unwrap(), Some(strip_option_shallow(other)), enums~, strict_keys=true)})"
+    None => "\{v}"
+  }
+}
+
+///|
+fn strip_option_shallow(t : JType) -> JType {
+  match t {
+    JTOption(x) => x
+    other => other
+  }
+}
+
+///|
+/// 顶层值：struct record 多行（可读性）；其余形态内联。
+/// enums/strict_keys（#14-2b fill）透传——顶层 record 的键集校验同 strict 语义
 fn render_top_value(
   table : StructTable,
   atab : AliasTable,
   j : Json,
   ty : JType?,
+  enums? : Map[String, EnumDef] = Map([]),
+  strict_keys? : Bool = false,
 ) -> String raise Diag {
   match (j, ty) {
     (Object(o), Some(JTStruct(name))) => {
       let entries : Array[String] = []
       let ks : Array[String] = []
       o.each(fn(k, _) { ks.push(k) })
+      if strict_keys {
+        strict_check_keys(table, atab, name, ks)
+      }
       for k in ks {
         let v = o.get(k).unwrap()
         let label = alias_field_label(atab, name, k)
         entries.push(
-          "\{label}: \{render_value(table, atab, v, struct_field_type(table, name, label))}",
+          "\{label}: \{render_value(table, atab, v, struct_field_type(table, name, label), enums~, strict_keys~)}",
         )
       }
       let buf = StringBuilder()
@@ -241,7 +490,7 @@ fn render_top_value(
       buf.write_string("}")
       buf.to_string()
     }
-    _ => render_value(table, atab, j, ty)
+    _ => render_value(table, atab, j, ty, enums~, strict_keys~)
   }
 }
 

@@ -829,3 +829,130 @@ test "import : --strict 恢复空容器拒绝（#14-2a——严格档反向 opt-
   }
   inspect(d2.contains("[J4002]"), content="true")
 }
+
+///|
+test "fill : 空容器按声明类型直填 + 头逐字节保留（#14-2b）" {
+  let existing =
+    #|struct Cfg {
+    #|  list : Array[String]
+    #|}
+    #|
+    #|pub let cfg : Cfg = Cfg::{
+    #|  list: [],
+    #|}
+  // fill：源 JSON 与声明同步 → 产物 == 原文（值体重算结果相同）
+  let filled1 = @src.fill_source(
+    "{\"list\": []}",
+    existing,
+    path="cfg.json.mbt",
+    stem="cfg",
+  )
+  // fill 产物以尾换行收束（生成器惯例）；值体与原文一致 = 同步态
+  inspect(filled1, content=existing + "\n")
+  // 源新增样本：值体按声明类型直吃（Array[String] 吃 "a"）——空容器
+  // 声明类型即消歧（不再 Never）
+  let filled2 = @src.fill_source(
+    "{\"list\": [\"a\"]}",
+    existing,
+    path="cfg.json.mbt",
+    stem="cfg",
+  )
+  inspect(
+    filled2.contains("list: [\"a\"]"),
+    content="true",
+  )
+  inspect(
+    @src.build_source(filled2, path="cfg.json.mbt", expected_name="cfg"),
+    content="{\"list\":[\"a\"]}",
+  )
+}
+
+///|
+test "fill : 键集漂移按声明 enum 消歧（#14-2b）" {
+  let existing =
+    #|enum Case {
+    #|  A(Ax)
+    #|  B(Bx)
+    #|}
+    #|struct Ax {
+    #|  a : Int
+    #|}
+    #|struct Bx {
+    #|  b : Int
+    #|}
+    #|struct T {
+    #|  xs : Array[Case]
+    #|}
+    #|
+    #|pub let t : T = T::{
+    #|  xs: [],
+    #|}
+  // 原始形态输入：按键集选变体
+  let f1 = @src.fill_source(
+    "{\"xs\": [{\"a\": 1}, {\"b\": 2}]}",
+    existing,
+    path="t.json.mbt",
+    stem="t",
+  )
+  // 数组 ≥2 元素逐元素折行（#9 排版）——消歧结果按折行形态断言
+  inspect(
+    f1.contains("A(Ax::{ a: 1 }),") && f1.contains("B(Bx::{ b: 2 }),"),
+    content="true",
+  )
+  inspect(
+    @src.build_source(f1, path="t.json.mbt", expected_name="t"),
+    content="{\"xs\":[{\"case\":\"A\",\"a\":1},{\"case\":\"B\",\"b\":2}]}",
+  )
+  // 降级产物形态输入（tag 对象）：case 键指示变体——fill 吃自己的产物
+  let f2 = @src.fill_source(
+    "{\"xs\": [{\"case\": \"A\", \"a\": 1}]}",
+    existing,
+    path="t.json.mbt",
+    stem="t",
+  )
+  inspect(f2.contains("A(Ax::{ a: 1 })"), content="true")
+}
+
+///|
+test "fill : 消歧失败 fail loud + 多余键拒（#14-2b）" {
+  let existing =
+    #|enum Case {
+    #|  A(Ax)
+    #|}
+    #|struct Ax {
+    #|  a : Int
+    #|}
+    #|struct T {
+    #|  xs : Array[Case]
+    #|}
+    #|
+    #|pub let t : T = T::{
+    #|  xs: [],
+    #|}
+  // 键集无匹配变体
+  let d1 = try {
+    let _ = @src.fill_source(
+      "{\"xs\": [{\"zz\": 1}]}",
+      existing,
+      path="t.json.mbt",
+      stem="t",
+    )
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d1.contains("[J3004]") && d1.contains("no variant"), content="true")
+  // struct 键集多余
+  let d2 = try {
+    let _ = @src.fill_source(
+      "{\"xs\": [], \"extra\": 1}",
+      existing,
+      path="t.json.mbt",
+      stem="t",
+    )
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d2.contains("[J3005]"), content="true")
+}
