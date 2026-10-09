@@ -718,6 +718,58 @@ test "import : --type-name-map 语义错拒绝（J1010，#6-4）" {
 }
 
 ///|
+test "import : --type-name-map 命中后派生名须占位（#23）" {
+  // 同文件两个**不同签名、同首键**的组：映射只替换第一个组的名，
+  // 第二个组的 derived 必须按未映射序列继续（Status → Status2），
+  // 不得再算出同一个 derived、再命中同一条映射而假撞名。
+  // 实测形态 = MoUI checks/linux.json（sourceBuild 与 rendererL2 基名均 Status）
+  let json = "{\"a\": {\"status\": 1, \"evidence\": 2}, \"b\": {\"status\": 1, \"route\": 2}}"
+  let map : Map[String, String] = { "Status": "Foo" }
+  let outcome = @src.import_source(
+    json,
+    path="t.json",
+    stem="t",
+    type_name_map=map,
+  )
+  inspect(outcome.content.contains("pub struct Foo"), content="true")
+  // 第二个异签名组落到未映射序列的 Status2（非再次命中的 Foo）
+  inspect(outcome.content.contains("pub struct Status2"), content="true")
+  // 映射命中键记录（unmatched 面不受影响）
+  inspect(outcome.unmatched.length(), content="0")
+}
+
+///|
+test "import : --type-name-map 不因占位误拒合法映射（#23 反面）" {
+  // 反面锚：derived 占位**只**用于选名，不参与映射值的撞名判据——
+  // 把另一组映射到前一组**被替换掉**的 derived 名，是合法发射（无实际同名）
+  let json = "{\"a\": {\"status\": 1, \"evidence\": 2}, \"b\": {\"route\": 1}}"
+  let map : Map[String, String] = { "Status": "Foo", "Route": "Status" }
+  let outcome = @src.import_source(
+    json,
+    path="t.json",
+    stem="t",
+    type_name_map=map,
+  )
+  inspect(outcome.content.contains("pub struct Foo"), content="true")
+  inspect(outcome.content.contains("pub struct Status"), content="true")
+}
+
+///|
+test "import : 跨文件 taken 参与 dedup 兜底（#24）" {
+  // 同目录已有别文件产物声明 Status/Status2（taken）：本文件的异签名组
+  // 在 stem 前缀也被占后，dedup 兜底**不得**退回未前缀的 taken 名
+  // （实测形态 = MoUI 同目录 17 文件 → moon [4051] 声明两次）
+  let json = "{\"k\": 1, \"one\": {\"status\": 1, \"evidence\": 2}, \"two\": {\"status\": 1, \"route\": 2}}"
+  let outcome = @src.import_source(json, path="b.json", stem="b", taken_names=[
+    "A", "Status", "Status2",
+  ])
+  inspect(outcome.content.contains("pub struct BStatus"), content="true")
+  inspect(outcome.content.contains("pub struct Status3"), content="true")
+  // 不得复用 taken 里的裸 Status
+  inspect(outcome.content.contains("pub struct Status {"), content="false")
+}
+
+///|
 test "D-5 嵌套 enum payload：payload 类型是 enum 名时须 resolve（审阅 P2）" {
   // 带参构造器的形参类型为 enum 名：parse_type 产 JTStruct，查表分化
   // 需要 resolve_custom——root/struct 字段侧都 resolve，唯 payload 漏
@@ -971,4 +1023,54 @@ test "import : 含转义 JSON 往返无损（#16——真实世界的换行/引�
   // 输出规范形态：控制符/引号/反斜杠保 JSON 转义，非 ASCII 裸 UTF-8
   //（\u4e2d → 中、代理对 → 🚀——「无 \uXXXX 噪音」既定策略）
   inspect(built, content="{\"text\":\"a\\tb\\nc\\\"d\\\\e/f中🚀g\"}")
+}
+
+///|
+test "import : 数组元素 null 提升 Option（#20）——契约要求产出合法 .json.mbt" {
+  // 字段位 null 由 merge_samples 聚 Option；元素位曾直接调 lub 绕过聚合
+  // → lub 的 `(JTNullLike, t) => t` 静默丢 null → 产物非法（J0002 generator bug）。
+  // 三形态：null + 标量 / 全 null / null + 对象。
+  let o1 = @src.import_source("{\"xs\": [null, 1, 2]}", path="t.json", stem="t")
+  inspect(o1.content.contains("xs : Array[Int?]"), content="true")
+  inspect(
+    @src.build_source(o1.content, path="t.json.mbt"),
+    content="{\"xs\":[null,1,2]}",
+  )
+  // 全 null 数组 → Array[Never?]（零信息 + 可空；Never 底型范式）
+  let o2 = @src.import_source("[null, null]", path="t.json", stem="t")
+  inspect(o2.content.contains("Array[Never?]"), content="true")
+  inspect(
+    @src.build_source(o2.content, path="t.json.mbt"),
+    content="[null,null]",
+  )
+  // null + 对象元素：null 被吸收进 Option，对象仍定型
+  let o3 = @src.import_source("[null, {\"a\": 1}]", path="t.json", stem="t")
+  inspect(
+    @src.build_source(o3.content, path="t.json.mbt"),
+    content="[null,{\"a\":1}]",
+  )
+  // 对照（不得回退）：字段位多样本 null 仍是 Option（既有行为）
+  let o4 = @src.import_source(
+    "{\"items\": [{\"v\": null}, {\"v\": 1}]}",
+    path="t.json",
+    stem="t",
+  )
+  inspect(
+    @src.build_source(o4.content, path="t.json.mbt"),
+    content="{\"items\":[{\"v\":null},{\"v\":1}]}",
+  )
+}
+
+///|
+test "import : JSON 语法错报错码点用十六进制（#22 附带——十进制冒充 U+XXXX 误导定位）" {
+  // 尾逗号本身仍是拒绝态（既有锚 P2-6① 钉死；是否放开见 jsonmbt#22 的 A/B 裁定）。
+  // 本条只钉报错文案：旧实现 `U+\{c.to_int()}` 把**十进制**码点接在 U+ 后
+  // （`]` = U+005D = 93 十进制 → 报成 "U+93"）。
+  let d = try {
+    let _ = @src.import_source("{\"a\": @}", path="t.json", stem="t")
+    "ok"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { "non-diag" }
+  }
+  inspect(d.contains("U+0040"), content="true")
 }

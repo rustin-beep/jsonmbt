@@ -712,6 +712,68 @@ func caseTypeNameMap(exe, dir string) error {
 	return nil
 }
 
+// #23：--type-name-map 命中后派生名须占位——同文件「异签名、同基名」的组，
+// 第 2 个组不得再算出同一个 derived、再命中同一条映射而假撞名。
+// 实测形态 = MoUI checks/linux.json（sourceBuild 与 rendererL2 基名均 Status）。
+// 层 1 已锚语义；此处锚 CLI 进程面：rc 0、两名并存、往返等价。
+func caseNameMapRepeatedBase(exe, dir string) error {
+	// a 与 b 首键同为 status、键集不同 → 两个签名（Status / Status2）
+	writeFile(dir, "plat.json", `{"a":{"status":1,"evidence":2},"b":{"status":1,"route":2}}`)
+	// 首轮（-o -，不落盘，避免产物进入 taken 扫描面）确认未映射序列
+	rc, out, _, err := runExe(exe, dir, "import", "plat.json", "-o", "-")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("首轮 rc=%d err=%v", rc, err)
+	}
+	if !strings.Contains(string(out), "Status2") {
+		return fmt.Errorf("未映射序列缺 Status2:\n%s", string(out))
+	}
+	// 带 map：只替换 Status → Foo；Status2 须保持（修前 = J1010 假撞名）
+	writeFile(dir, "m.json", `{"Status":"Foo"}`)
+	rc, _, stderr, err := runExe(exe, dir, "import", "plat.json", "--type-name-map", "m.json", "-o", "plat.json.mbt")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("#23 假撞名：rc=%d stderr=%q", rc, stderr)
+	}
+	prod, _ := os.ReadFile(filepath.Join(dir, "plat.json.mbt"))
+	s := string(prod)
+	if !strings.Contains(s, "pub struct Foo") || !strings.Contains(s, "pub struct Status2") {
+		return fmt.Errorf("映射结果不符（期望 Foo + Status2）:\n%s", s)
+	}
+	// 往返等价
+	if rc, _, _, err := runExe(exe, dir, "build", "plat.json.mbt"); err != nil || rc != 0 {
+		return fmt.Errorf("build rc=%d err=%v", rc, err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "plat.json"))
+	want := `{"a":{"status":1,"evidence":2},"b":{"status":1,"route":2}}`
+	if strings.TrimRight(string(got), "\r\n") != want {
+		return fmt.Errorf("round-trip\nwant=%s\ngot =%s", want, string(got))
+	}
+	return nil
+}
+
+// #24：跨文件 taken 参与 dedup 兜底——同目录第二文件的异签名组在 stem 前缀
+// 也被占后，不得退回未前缀的 taken 名（否则 moon [4051] 声明两次）。
+// 实测形态 = MoUI 同目录多文件同基名组。
+func caseCrossFileTakenDedup(exe, dir string) error {
+	writeFile(dir, "a.json", `{"k":"a","one":{"status":1,"evidence":2},"two":{"status":1,"route":2}}`)
+	writeFile(dir, "b.json", `{"k":"b","one":{"status":1,"evidence":2},"two":{"status":1,"route":2}}`)
+	if rc, _, _, err := runExe(exe, dir, "import", "a.json"); err != nil || rc != 0 {
+		return fmt.Errorf("a import rc=%d err=%v", rc, err)
+	}
+	if rc, _, _, err := runExe(exe, dir, "import", "b.json"); err != nil || rc != 0 {
+		return fmt.Errorf("b import rc=%d err=%v", rc, err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "b.json.mbt"))
+	s := string(b)
+	if !strings.Contains(s, "pub struct BStatus") || !strings.Contains(s, "pub struct Status3") {
+		return fmt.Errorf("b 未按 taken 选名（期望 BStatus + Status3）:\n%s", s)
+	}
+	if strings.Contains(s, "pub struct Status {") {
+		return fmt.Errorf("b 复用 taken 裸名 Status（moon [4051] 隐患）:\n%s", s)
+	}
+	return nil
+}
+
+
 // migrate 子命令（#6-5）：批量迁移侦察三榜报告——byte-eq（可直进 CI 对账）/
 // value-eq（值等仅风格差，确认口径）/ reject（带 J 码原因）；默认零写
 // （--write 才落盘）；同目录撞名触发 stem 前缀化时告警指向 --type-name-map。
@@ -921,8 +983,45 @@ func caseFill(exe, dir string) error {
 	return nil
 }
 
+// caseMigrateAstralBytes：issue #21 红→绿锚。
+// migrate 的 trim_trailing_nl 曾用 String::length()（UTF-16 码元数）索引
+// to_array()（码点数）——含星面字符（emoji U+1F680）时前者更大 →
+// chars[end-1] 越界 panic，且 panic 中断整批扫描（不是跳过该文件）。
+// 修复前：stderr 出 PanicError 且后续文件全部缺席；修复后：三张全获判定。
+func caseMigrateAstralBytes(exe, dir string) error {
+	writeFile(dir, "emoji.json", "{\"a\":\"\U0001F680\"}\n")
+	writeFile(dir, "ok.json", "{\"a\":1}\n")
+	writeFile(dir, "bad.json", "{oops")
+	rc, out, stderr, err := runExe(exe, dir, "migrate", ".")
+	if err != nil {
+		return fmt.Errorf("migrate 执行失败: %v", err)
+	}
+	// rc 契约（对齐 caseMigrate）：有 REJECT 即 rc=1；4 才是用法/IO 错
+	if rc != 1 {
+		return fmt.Errorf("migrate 含 1 张 REJECT 应 rc=1，实得 rc=%d\nstdout=%s\nstderr=%s", rc, out, stderr)
+	}
+	if bytes.Contains(stderr, []byte("PanicError")) || bytes.Contains(out, []byte("PanicError")) {
+		return fmt.Errorf("migrate 遇星面字符 panic（#21 未修）\nstdout=%s\nstderr=%s", out, stderr)
+	}
+	// panic 会截断报告——三张都必须在 = 「单文件失败不中断整批」的探针
+	for _, f := range []string{"emoji.json", "ok.json", "bad.json"} {
+		if !bytes.Contains(out, []byte(f)) {
+			return fmt.Errorf("migrate 报告缺 %s（整批被中断？）\nstdout=%s", f, out)
+		}
+	}
+	// 星面字符的字符串照常定型并获 BYTE-EQ 判定（不是降级成"跳过"）
+	if !bytes.Contains(out, []byte("emoji.json → BYTE-EQ")) {
+		return fmt.Errorf("emoji.json 未获 BYTE-EQ 判定\nstdout=%s", out)
+	}
+	if !bytes.Contains(out, []byte("bad.json → REJECT")) {
+		return fmt.Errorf("bad.json 未获 REJECT 判定（坏文件应只让自己失败）\nstdout=%s", out)
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
+	{"migrate-astral-bytes", caseMigrateAstralBytes},
 	{"probe-samples-golden", caseProbeSamples},
 	{"build-stdout-deterministic", caseBuildDeterministic},
 	{"import-check-idempotent", caseImportCheckGate},
@@ -943,6 +1042,8 @@ var cases = []testCase{
 	{"doctor-clean", caseDoctorClean},
 	{"doctor-readonly", caseDoctorReadonly},
 	{"type-name-map", caseTypeNameMap},
+	{"name-map-repeated-base", caseNameMapRepeatedBase},
+	{"cross-file-taken-dedup", caseCrossFileTakenDedup},
 	{"migrate-three-boards", caseMigrate},
 	{"j2007-help-text", caseJ2007HelpText},
 	{"migrate-taken-twins", caseMigrateTakenTwins},

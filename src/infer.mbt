@@ -130,6 +130,7 @@ priv struct InferCtx {
   type_map : Map[String, String] // 派生名 → 用户语义名（--type-name-map，#6-4）
   map_hits : Array[String] // 命中的映射键（首见序——unmatched = 键集 - 命中集）
   map_value_hints : Map[String, String] // 容器路径 → 组名基名（Map 值对象宿主键派生，#6-4）
+  derived_claimed : Array[String] // 已被映射消费的派生名（未发射但占位——#23：同基名异签名组不得重算同一 derived）
   strict : Bool // #14-2a：空容器严格档（--strict）——启发无解时如旧 J4001/J4002 拒
   mut uses_never : Bool // #14-2a：产物用到 Never 底型（codegen 据此发 enum 定义）
   hints : Array[Diag]
@@ -177,6 +178,7 @@ fn infer_shapes(
     type_map: type_name_map,
     map_hits: [],
     map_value_hints: Map([]),
+    derived_claimed: [],
     strict,
     uses_never: false,
     hints: [],
@@ -254,6 +256,20 @@ fn infer_shapes(
     }
     root_ty = replace_empty_array(root_ty, never_ty(ctx))
   }
+  // #20 收尾断言（与 #14-2a 空容器保险丝同风格）：JTNullLike 只是聚合信号，
+  // 不得进入产物类型位置——曾泄漏使 codegen 把 `null` 渲染成类型名（Array[null]
+  // → J1001）。此断言把「靠调用方守约」变成「靠机器」：正常流程不可达
+  // （字段位 merge_samples / 元素位 Array 分支均已聚合），命中即产品缺陷。
+  for s in structs {
+    for f in s.1 {
+      if has_null_like(f.1) {
+        raise null_leak_diag(ctx, s.0, f.0)
+      }
+    }
+  }
+  if has_null_like(root_ty) {
+    raise null_leak_diag(ctx, "(top level)", "(elements)")
+  }
   {
     structs,
     root_ty: Some(root_ty),
@@ -277,6 +293,32 @@ fn has_empty_array(t : JType) -> Bool {
 }
 
 ///|
+/// 类型里是否残留 JTNullLike（#20 收尾断言）：穿透 JTOption/JTArray/JTMap
+/// （与 has_empty_array 同口径——只查最外层会漏 Array[T?] 里的中间态）
+fn has_null_like(t : JType) -> Bool {
+  match t {
+    JTNullLike => true
+    JTOption(x) | JTArray(x) => has_null_like(x)
+    JTMap(_, v) => has_null_like(v)
+    _ => false
+  }
+}
+
+///|
+/// null 泄漏诊断（#20 收尾断言命中 = 内部缺陷，非用户输入错）
+fn null_leak_diag(ctx : InferCtx, name : String, label : String) -> Diag {
+  Diag(
+    code=JAllNull,
+    loc=dummy_loc(),
+    message="internal: null leaked into a type position (\{name}.\{label}) — the aggregating caller did not lift it to Option",
+    help=Some(
+      "please report this with the input JSON — null must be aggregated before reaching a type position",
+    ),
+    path=ctx.fname,
+  )
+}
+
+///|
 /// Never 底型引用（#14-2a）——JTStruct 裸名（build 回吃时经产物自带
 /// enum Never {} 定义 resolve 分化为 JTEnum；零构造器 = 免费护栏：
 /// 元素位写值会被 moon [4014] 与 jsonmbt J3004 双侧拦下）
@@ -295,7 +337,7 @@ fn note_never_hint(ctx : InferCtx) -> Unit {
       Diag(
         code=JNeverHint,
         loc=dummy_loc(),
-        message="empty container placeholder: Array[Never] / Map[String, Never] — replace Never with the real element type once a non-empty sample exists (or re-import)",
+        message="empty container placeholder: Array[Never] / Array[Never?] / Map[String, Never] — replace Never with the real element type once a non-empty sample exists (or re-import)",
         help=Some(
           "--strict rejects empty containers without clues (pre-0.1 behavior)",
         ),
@@ -358,7 +400,7 @@ fn alloc_type_name(ctx : InferCtx, base : String) -> String raise Diag {
   let derived : String = if ctx.taken.contains(primed0) &&
     primed0 != capitalize(ctx.stem) {
     let prefixed = capitalize(ctx.stem) + primed0
-    if is_legal_type_name(prefixed) && !ctx.used_type_names.contains(prefixed) {
+    if is_legal_type_name(prefixed) && !slot_taken(ctx, prefixed) {
       prefixed
     } else {
       dedup_fallback(ctx, primed0)
@@ -376,6 +418,8 @@ fn alloc_type_name(ctx : InferCtx, base : String) -> String raise Diag {
           "'\{derived}' → '\{user}': not a legal type name (expect an Uppercase start)",
         )
       }
+      // #23：撞名判据只对**发射名**（used_type_names）——derived 已被替换未发射，
+      // 不得因它占位而误拒（否则 {"Bar":"Status"} 这类合法映射被假撞）
       if ctx.used_type_names.contains(user) ||
         (ctx.taken.contains(user) && user != capitalize(ctx.stem)) {
         raise bad_name_map_diag(
@@ -385,6 +429,11 @@ fn alloc_type_name(ctx : InferCtx, base : String) -> String raise Diag {
       }
       if !ctx.map_hits.contains(derived) {
         ctx.map_hits.push(derived)
+      }
+      // #23：派生名虽被替换未发射，仍须占位——否则同基名的**异签名**组下次
+      // dedup 会再算出同一个 derived、再命中同一条映射 → 假撞（MoUI linux.json）
+      if !ctx.derived_claimed.contains(derived) {
+        ctx.derived_claimed.push(derived)
       }
       ctx.used_type_names.push(user)
       user
@@ -397,16 +446,26 @@ fn alloc_type_name(ctx : InferCtx, base : String) -> String raise Diag {
 }
 
 ///|
+/// 派生名占位判定（#23/#24）：发射名 ∪ 被映射消费的派生名 ∪ 同目录别文件已占名
+/// （taken，本文件顶层 stem 名除外——与前缀化判据同款豁免）。仅供 dedup/prefixed
+/// 选名，**不**用于映射值的撞名判据（后者只看发射名——见 alloc_type_name）
+fn slot_taken(ctx : InferCtx, n : String) -> Bool {
+  ctx.used_type_names.contains(n) ||
+  ctx.derived_claimed.contains(n) ||
+  (ctx.taken.contains(n) && n != capitalize(ctx.stem))
+}
+
+///|
 /// 去重兜底：primed 可用即用；被占则后缀 2/3/…（首见序确定性）
 fn dedup_fallback(ctx : InferCtx, primed : String) -> String {
-  if !ctx.used_type_names.contains(primed) {
+  if !slot_taken(ctx, primed) {
     return primed
   }
   let mut i = 2
   let mut candidate = ""
   while true {
     let c = "\{primed}\{i}"
-    if !ctx.used_type_names.contains(c) {
+    if !slot_taken(ctx, c) {
       candidate = c
       break
     }
@@ -463,17 +522,35 @@ fn walk_value(
         return JTArray(JTEmpty)
       }
       let elem_path = path + "[]"
+      // #20：元素位与字段位同口径——null 单独计数后聚 Option。
+      // 旧实现直接调 lub，而 lub 的 `(JTNullLike, t) => t` 是「调用方已完成
+      // Option 聚合」的契约（见 :730 注释）——元素位无人履行 → null 被静默
+      // 丢弃，[null,1,2] 产出非法 .json.mbt（J0002 generator bug），
+      // [null,null] 更把 JTNullLike 渲染成类型名 `null`。
       let mut elem : JType? = None
+      let mut nulls = 0
       for e in elems {
         let t = walk_value(ctx, e, path=elem_path)
-        elem = Some(
-          match elem {
-            None => t
-            Some(prev) => lub(ctx, prev, t, in_array=true)
-          },
-        )
+        if t is JTNullLike {
+          nulls = nulls + 1
+        } else {
+          elem = Some(
+            match elem {
+              None => t
+              Some(prev) => lub(ctx, prev, t, in_array=true)
+            },
+          )
+        }
       }
-      JTArray(elem.unwrap())
+      // 全 null 数组 = 零信息 + 可空 → Never?（#14-2a Never 底型范式的
+      // 可空扩展；Array[Never?] 降级 [null,...] 无损）。直接给 never_ty
+      // 而非 JTEmpty——replace_empty_array 把裸 JTEmpty 视作「数组本身为空」，
+      // JTOption(JTEmpty) 会被它错解成 Array[Array[Never]?]。
+      let base = match elem {
+        None => never_ty(ctx)
+        Some(t) => t
+      }
+      JTArray(if nulls > 0 { JTOption(base) } else { base })
     }
     Object(o) => {
       let keys : Array[String] = []

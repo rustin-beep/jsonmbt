@@ -92,6 +92,36 @@ fn jp_skip_ws(p : JParser) -> Unit {
 }
 
 ///|
+/// 码点 → `U+XXXX` 形态（十六进制，不足 4 位补零）——诊断消息用。
+/// 旧实现把**十进制**码点直接接在 `U+` 后（`]` = 93 十进制 → 报成 "U+93"，
+/// 误导定位）；十六进制才是 `U+` 惯例。
+fn cp_label(cp : Int) -> String {
+  let digits = "0123456789ABCDEF".to_array()
+  let mut v = cp
+  let rev : Array[Char] = []
+  if v <= 0 {
+    rev.push('0')
+  }
+  while v > 0 {
+    rev.push(digits[v % 16])
+    v = v / 16
+  }
+  let buf = StringBuilder()
+  buf.write_string("U+")
+  let mut pad = 4 - rev.length()
+  while pad > 0 {
+    buf.write_char('0')
+    pad = pad - 1
+  }
+  let mut i = rev.length() - 1
+  while i >= 0 {
+    buf.write_char(rev[i])
+    i = i - 1
+  }
+  buf.to_string()
+}
+
+///|
 pub fn json_parse(src : String, fname? : String = "<json>") -> Json raise Diag {
   let p = JParser::new(src, fname)
   jp_skip_ws(p)
@@ -143,7 +173,7 @@ fn jp_value(p : JParser, depth : Int) -> Json raise Diag {
         raise jp_error(
           p,
           JJsonSyntax,
-          "invalid JSON: unexpected character U+\{c.to_int().to_string()}",
+          "invalid JSON: unexpected character \{cp_label(c.to_int())}",
         )
       }
   }

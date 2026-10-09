@@ -63,8 +63,13 @@ fn byte_eq(a : String, b : String) -> Bool {
 
 ///|
 fn trim_trailing_nl(s : String) -> String {
-  let mut end = s.length()
+  // #21：索引必须与 to_array() 同口径。String::length() 是 **UTF-16 码元数**，
+  // Array[Char] 是**码点数**——含星面字符（emoji）时前者更大 → chars[end-1]
+  // 越界 panic。同族已在 src/jsonparse.mbt / src/jsonc.mbt / src/unescape.mbt
+  // 三处用 view.length() 修过（见 importer_test.mbt 的 emoji 回归锚），
+  // cmd/ 层这一处漏网；且 panic 会中断整批 migrate 扫描。
   let chars = s.to_array()
+  let mut end = chars.length()
   while end > 0 && (chars[end - 1] == '\n' || chars[end - 1] == '\r') {
     end = end - 1
   }
