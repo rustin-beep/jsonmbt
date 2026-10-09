@@ -757,8 +757,10 @@ fn run_one(
     )
   }
   if not(pretty) && path != "-" {
+    // #23 建议2：落盘 hint 点名实际输出路径——下游批量脚本漏 -o 时
+    // 曾连环产出 .json.json 副产物不自知，hint 只说形态不说去向帮不上忙
     write_stderr(
-      "jsonmbt: hint: build without --pretty emits compact JSON; if a downstream anchors by byte fingerprint, re-run with --pretty [--indent N]",
+      "jsonmbt: hint: build without --pretty emits compact JSON → '\{target}'; if a downstream anchors by byte fingerprint, re-run with --pretty [--indent N]",
     )
   }
   atomic_write(target, product) catch {

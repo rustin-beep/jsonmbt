@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Fixed（issue #23：build 无 -o 默认输出名护栏 + 落盘 hint 点名输出路径）
+
+- **主诉求在 HEAD 不复现**（三重证据：`main.mbt` 唯一 `.json` 拼接点自 P1 MVP 未变；import/migrate 三条输出路径全排查无坑形态；Vitro 原文件 `rules.json.mbt` 原名实测产出 `rules.json` 正确）——issue 实录的 `.json.json` 最可能源于 Vitro 滚动消费本仓 `_build` exe 时的旧/中间态产物（陷阱 #41 下游版）。处置 = 锚死契约 + 补建议 2，不改动正确行为
+- **层 2 新锚 `default-output-name`**：单/多输入 `x.json.mbt` 无 `-o` → 断言 `x.json` 存在且 `x.json.json` 不存在（issue 实录老坑形态点名拦截）+ 产物内容正确；埋雷证红（临时注入剥 `.mbt` 坑形态 → 5 用例红，含本锚）后排雷全绿
+- **落盘 hint 点名实际输出路径**（issue 建议 2）：`build without --pretty emits compact JSON → '<target>'`——下游批量脚本漏 `-o` 时 hint 只说形态不说去向帮不上忙；带 `--pretty` 静默、`-o -` 无落盘 hint 契约不变
+- 层 2 30/30（+1 用例）；层 1 104/104、build 0 err（无涉改动，回归确认）
+
 ### Added（issue #19：Map 键序契约进下游文档）
 
 - INTEGRATION.md 新节「机器生成 .json.mbt（emitter 作者契约）」：Map 键序 = 源文本序（不排序——D-11 ④）、禁止依赖运行时 map 遍历序（Go range 序随机——Vitro jmemit 实测踩坑）、任意确定性序皆可；README 契约清单同步一行。行为无变化（契约一直在，本次补文档面——锚早已在位：probe/samples Map golden 锁键序 + PLAN D-11 ④ + skill emitter 纪律 2）

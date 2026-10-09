@@ -1019,6 +1019,48 @@ func caseMigrateAstralBytes(exe, dir string) error {
 	return nil
 }
 
+// caseDefaultOutputName：issue #23 护栏锚。
+// build 无 -o 的默认输出名是对外契约（Vitro 批量脚本曾连环踩坑）：
+// 双后缀 x.json.mbt → x.json（剥整 .json.mbt 再拼 .json）；x.json.json
+// 是 issue 实录的老坑形态，不得再现。多输入与单输入走同一条路径推导
+// （-o 只许单输入，多输入必然走默认名）。顺带锚 #23 建议 2：落盘
+// hint 必须点名实际输出文件（下游脚本靠它自查产物去向）。
+func caseDefaultOutputName(exe, dir string) error {
+	writeFile(dir, "d.json.mbt", "struct D {\n  a : Int\n}\npub let d : D = D::{ a: 1 }\n")
+	rc, _, stderr, err := runExe(exe, dir, "build", "d.json.mbt")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("build rc=%d err=%v stderr=%q", rc, err, stderr)
+	}
+	if !strings.Contains(string(stderr), "d.json") {
+		return fmt.Errorf("落盘 hint 应点名输出文件 d.json（#23 建议2），got %q", stderr)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "d.json"))
+	if err != nil {
+		return fmt.Errorf("默认输出应为 d.json: %v", err)
+	}
+	if !bytes.Equal(bytes.TrimRight(got, "\r\n"), []byte(`{"a":1}`)) {
+		return fmt.Errorf("d.json 内容不符: %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "d.json.json")); err == nil {
+		return fmt.Errorf("不得产出 d.json.json（#23 实录的老坑形态）")
+	}
+	// 多输入：每张各自取默认名（同一推导路径，防将来分叉）
+	writeFile(dir, "e.json.mbt", "struct E {\n  b : Int\n}\npub let e : E = E::{ b: 2 }\n")
+	rc, _, _, err = runExe(exe, dir, "build", "d.json.mbt", "e.json.mbt")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("multi rc=%d err=%v", rc, err)
+	}
+	for _, name := range []string{"d.json", "e.json"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			return fmt.Errorf("多输入应各自落 %s: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "e.json.json")); err == nil {
+		return fmt.Errorf("不得产出 e.json.json（#23 实录的老坑形态）")
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"migrate-astral-bytes", caseMigrateAstralBytes},
@@ -1049,6 +1091,7 @@ var cases = []testCase{
 	{"migrate-taken-twins", caseMigrateTakenTwins},
 	{"never-placeholder", caseNeverPlaceholder},
 	{"fill", caseFill},
+	{"default-output-name", caseDefaultOutputName},
 }
 
 func defaultExe() string {
