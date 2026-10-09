@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added（issue #19：Map 键序契约进下游文档）
+
+- INTEGRATION.md 新节「机器生成 .json.mbt（emitter 作者契约）」：Map 键序 = 源文本序（不排序——D-11 ④）、禁止依赖运行时 map 遍历序（Go range 序随机——Vitro jmemit 实测踩坑）、任意确定性序皆可；README 契约清单同步一行。行为无变化（契约一直在，本次补文档面——锚早已在位：probe/samples Map golden 锁键序 + PLAN D-11 ④ + skill emitter 纪律 2）
+
 ### Added（issue #17：数字降级规范化契约成文——方案 C）
 
 - README 契约段 + 层 1 专用锚：整数族（Int/Int64）解析值归一（`-0`→`0`、`0x10`→`16`、Int64 全精度文本保留）；Double 源拼写透传（`1.50` 原样——避免解析-再格式化精度伪影）。方案 B（规范化为最短往返）被否：破坏透传的无损设计且收益仅限「人工改拼写」场景（机器生成源天然稳定）。层 1 97/97

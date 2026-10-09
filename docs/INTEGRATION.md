@@ -150,6 +150,22 @@ cp /tmp/bak data/config.json.mbt
 
 判据：`rc ≠ 0` 且诊断码与预期一致。`moon check` 在 Windows 上错误退出码是 `127`。
 
+## 机器生成 .json.mbt（emitter 作者契约，#19）
+
+程序直产 `.json.mbt` 文本（不走 import）是机器写回域的正道，但有一条
+**确定性契约**必须遵守：
+
+> **Map 键序契约**：`build` 的 Map 输出键序 = `.json.mbt` 字面量的
+> **源文本序**（不排序、非字典序——D-11 ④）。
+
+- **禁止**依赖运行时 map 遍历序——Go 的 `for k := range m` / Py 的
+  dict 迭代在部分场景序不稳定（Go map range 序随机），用它直接渲染
+  `.mbt` → 同一数据两次生成产物不同 → 确定性破功（Vitro 侧 jmemit
+  靠 round-trip 对拍兜住才发现此坑）；
+- **正解**：以任意确定性序渲染（原文序 / 排序序 / 自定义稳定序皆可
+  ——build 忠实保留你写的序，不强制形态）；
+- struct 字段（record）同理：字段序 = 你写的序。
+
 ## 坑表（全部实测，勿再踩）
 
 | 坑 | 表现 | 正解 |
