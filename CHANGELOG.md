@@ -4,6 +4,30 @@
 
 ## [Unreleased]
 
+### Fixed（issue #25：L0 拒绝冗余圆括号包裹的字面量——moon fmt 规范产物可读）
+
+- **定性**：`A(("x"))` 是合法 MoonBit（fmt 幂等保留该形态——实测复核：payload 构造器位保留双括号、数组位收敛单层），值上严格等价 `A("x")`——拒绝即「合法 MoonBit 子集」承诺的非预期收窄（与 #16 转义宽集同族：jsonmbt 不比 moon 严），互操作 bug 级（真源进 fmt 跑的 workspace 即触发，Vitro #60 批一实录）
+- **修法**：`l0_expr` 新增 `Group` 分支——`Group(Paren)` 递归剥除（多层括号自然解、depth+1 计入防括号炸弹）、`Group(Brace)`（花括号块 = 副作用序列面）仍 J3001 拒（负锚：`A({ let s = "a" s })` 合法 MoonBit 但拒）；分发层修复 = **所有值位统一剥**（payload/数组元素/record 字段/Map 值/Some 内），不止 issue 建议的 payload/数组两处
+- **AST 快照登记**：`ast_snapshot_wbtest` 投影加 `G(p/b, …)` 变体 + 快照样本括号字段（parser 升级对冲面补齐）
+- **锚**：层 1 红→绿（`A(("double"))`/`A((#| 多行))`/三层括号值等价 + Brace 负锚）；probe/samples 新样本 `paren_payload`（fmt 后单层括号形态 + `#|` 带空格，moon check 干净——首版 enum 形态触发 `unused_constructor` warning 改自由数组，payload 位防线在层 1 锚）
+- 层 1 **114/114**（+2）、层 2 **32/32**（probe-samples 自动消费新样本）、build 0 err
+
+### Added（issue #22：JSONC 尾逗号收编——消解式，D-9 重写为输入 profile 单点定义）
+
+- **判据（可判定非枚举）**：只收「字符层删/替空白可消解为严格 JSON」的宽松特性——注释、对象/数组/嵌套尾逗号、BOM（仅文件首）收；`{,}`/`[,]`/`[1,,]`/`{"a":,}`、单引号串、无引号 key、hex、`NaN`/`Infinity` 永不收（扩值域——JSON5 因此不进）；tsconfig/eslintrc/settings.json 类真实文件直接进
+- **落法 = 消解式**：`strip_jsonc` 从注释剥离器升级**输入归一化器**（唯一宽松层），尾逗号同一 pre-pass **等长空格消解**（诊断行列不漂移）；`jsonparse.mbt` 恒裸 RFC 8259——对拍基准不污染（parser 仅删两处 `(trailing comma is not JSON)` 括号注释：消解式下不可达，防误导）
+- **机制**：pending-comma 暂存（穿透空白**与注释**看有效字符才判定）+ last_sig guard（逗号前一非空白有效字符 ∈ `{ [ , :` 或文件首则不消解）+ BOM 仅 `pos==0`；埋雷实锤 guard 的真实价值 = 报错位正确性（禁用时报错从 U+002C 漂到 U+005D——「保位」锚先红）
+- **CLI `--input <json|jsonc>`**：默认 jsonc；json = 裸 RFC 8259（注释也拒）；import/fill/migrate 三入口同旗标；别值 J0001、非 import/migrate verb 误用拒绝；**不复用 `--strict`**（#14-2a 已占用）；库层 `import_source`/`fill_source` 新增 `jsonc? : Bool = true` 出口面参数（mbti 已同步）
+- **锚拆档（防线净增）**：P2-6① 原断言迁移至 json 档锚（永久保留）+ 默认档翻转为值等价锚；负锚五形态（开头/孤立/值缺失逗号）；BOM 锚（文件首消解 + 字符串内 U+FEFF 保留）；穿透注释锚；保位列位锚；层 1 **112/112**（+7：含 manual 摄取章新可执行锚）
+- **层 2 第五件**：probe/samples 新样本对 `tsconfig_like`（.jsonc 三合一输入 + 人写语义命名 .json.mbt + golden .json）；caseProbeSamples 扩第二循环（.jsonc 输入 → import → build 与 golden 比 + `--input json` 同输入必拒）；新用例 `jsonc-input-profile`（旗标值域/误用/双档对拍）——层 2 **32/32**
+
+### Added（issue #24：Vitro 教学资产批实战反馈——建模指引 + `#|` 空格语义 + doctor 排版 note）
+
+- **键域强校验指引三处落文**（#24-1）：manual 新可执行锚「键域强校验——带参枚举数组」（`Map[AlgoE, String]` 裸构造器键位 moon 本尊即 `[4014]` 拒——语言层边界，本仓探针复核；正解 = 带参枚举数组，降级 `[{"case","value"}]`）+ skill 规则 3a + README importer 段——Vitro 两轮探针摸出来的路，写下来免重摸
+- **`#|` 前导空格语义文档化**（#24-2）：moon 原生语义 `#| x` 值 = `" x"`（非 jsonmbt 偏差）——manual 新可执行锚 + skill 规则 5 补句
+- **doctor 排版 note**（#24-2b）：「全部非空 `#|` 行统一前导空格」形态 → note 行（hint 级——不计 ❌/⚠️、不改 rc：接线闸不掺内容口味；空行/纯空格行不参与统计，缩进 `#|` 不参与——moon 标记顶格，漏报无害）；层 2 新锚 `doctor-pipe-hint`（红→绿：实装前证红 + 对照组无 note 断言）
+- 层 1 **106/106**（manual +2 可执行锚）、层 2 **31/31**（+1 用例）
+
 ### Fixed（issue #23：build 无 -o 默认输出名护栏 + 落盘 hint 点名输出路径）
 
 - **主诉求在 HEAD 不复现**（三重证据：`main.mbt` 唯一 `.json` 拼接点自 P1 MVP 未变；import/migrate 三条输出路径全排查无坑形态；Vitro 原文件 `rules.json.mbt` 原名实测产出 `rules.json` 正确）——issue 实录的 `.json.json` 最可能源于 Vitro 滚动消费本仓 `_build` exe 时的旧/中间态产物（陷阱 #41 下游版）。处置 = 锚死契约 + 补建议 2，不改动正确行为

@@ -316,3 +316,17 @@ test "数字降级规范化契约锚（#17 方案 C 成文）——Int 系解析
     content="{\"a\":0,\"b\":1.50,\"c\":16,\"d\":9223372036854775807,\"e\":0.1}",
   )
 }
+
+///|
+test "#25 : 花括号块 payload 拒（Group::Brace——副作用序列非字面量）" {
+  // 花括号块做 payload 是合法 MoonBit（moon check 过——块内 let + 尾
+  // 表达式）但非纯字面量——圆括号剥除不扩到花括号块（#25 修复的边界锚）
+  let src = "enum A { A(String) }\npub let t : Array[A] = [\n  A({\n    let s = \"a\"\n    s\n  }),\n]\n"
+  let d = try {
+    let _ = @src.build_source(src, path="t.json.mbt", expected_name="t")
+    "SUCCEEDED"
+  } catch {
+    e => if e is Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d.contains("braced block is outside the L0"), content="true")
+}

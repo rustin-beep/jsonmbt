@@ -410,7 +410,7 @@ fn jp_array(p : JParser, depth : Int) -> Json raise Diag {
         raise jp_error(
           p,
           JJsonSyntax,
-          "invalid JSON: expected ',' or ']' in array (trailing comma is not JSON)",
+          "invalid JSON: expected ',' or ']' in array",
         )
     }
   }
@@ -460,7 +460,7 @@ fn jp_object(p : JParser, depth : Int) -> Json raise Diag {
         raise jp_error(
           p,
           JJsonSyntax,
-          "invalid JSON: expected ',' or '}' in object (trailing comma is not JSON)",
+          "invalid JSON: expected ',' or '}' in object",
         )
     }
   }

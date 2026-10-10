@@ -19,10 +19,11 @@ jsonmbt import  x.json --check            # 幂等闸：重导入必须逐字节
 jsonmbt import  x.json --type-name-map m.json  # 机器派生名 → 语义名（键=首次产物里的派生名，含前缀化形态）
 jsonmbt import  x.json --strict           # 空容器严格档：启发无解时如旧 J4001/J4002 拒（默认 Never 占位）
 jsonmbt import  x.json --fill x.json.mbt [--check]  # 按已有产物的类型头重算值体（头逐字节保留）；--check=值体同步闸（rc=2 源变）
+jsonmbt import  x.json [--input json|jsonc]  # 输入 profile：默认 jsonc（注释/尾逗号/文件首 BOM 消解——tsconfig 类直进）；json=裸 RFC 8259
 jsonmbt build   x.json.mbt -o x.json      # 确定性降级（同输入永同输出；失败零产物）
 jsonmbt build   x.json.mbt -o -           # build 链纯验证：stdout 出件（check 不跑降级链）
 jsonmbt check   x.json.mbt                # 只验不写（校验+内存构造，无降级 codegen）
-jsonmbt migrate  [dir] [--write]          # 批量迁移侦察：三榜报告（默认零写；rc 1=有 reject）
+jsonmbt migrate  [dir] [--write] [--input json|jsonc]  # 批量迁移侦察：三榜报告（默认零写；rc 1=有 reject）
 jsonmbt doctor   [dir]                    # 只读诊断：.json.mbt 是否真接上 moon 工具链（四项）
 ```
 
@@ -39,11 +40,12 @@ rc 语义：`0` ok / `1` 输入错 / `2` 漂移（--check）/ `4` 用法错。CI
 1d. **空容器占位**（#14-2a）：import 遇推断无线索的空数组/空对象 → `Array[Never]` / `Map[String, Never]`（产物自带 `pub enum Never {}`——零构造器 = 免费护栏，元素位写值 moon `[4014]` 红）；`--strict` 恢复旧拒绝（J4001/J4002 只在 strict 档出现）；手写空容器字段直接声明真元素类型（`Array[String]` + `[]`）即无此面；
 2. **一个文件一个顶层文档**：`foo.json.mbt` 内有且只有一个 `pub let foo : ...`——**绑定名必须等于文件 stem**（J2003 会指路）；
 3. **键集不齐的数组用带参 enum**（D-5）：每种键集一个 struct，`enum Case { A(Ax); B(Bx) }`，字面量 `A(Ax::{ field: value })`。降级投影 = tag 对象展开（payload 进顶层 + `"case"` tag 键）；**payload 字段禁止叫 `case`**（J3008 显式拒）；**payload 形参也可以是 enum 名**（`enum Field { Named(Col) }` + `Named(X)`——标量 payload 走 `{"case":…,"value":…}` 形态）；已知面：struct payload 含 `value` 字段展平后与标量 payload 的 `value` 键同形（J3008 只防 `case` 不防 `value`——实际可由 case 值区分，登记不修）；
+3a. **键域强校验（有限键集「拼错红」）→ 带参枚举数组**（#24）：`enum AlgoSuggestion { BubbleSort(String); … }` + `[BubbleSort("文案"), …]`——拼错变体名 moon check 写时红；降级 `[{"case":"BubbleSort","value":"…"}]`，下游按 case 值机械投影键名。**别用 `Map[AlgoE, String]`**：Map 字面量键位不接受裸构造器——moon 本尊即 `[4014]` Constr Type Mismatch（语言层边界非 jsonmbt 限制；Vitro 教学资产批两轮探针实录）；
 4. **import 不自动转缺键异构**（J4010/J4011 fail loud）——拼错字段名与真可选无法区分，自动推断会把数据错误静默类型化。遇拒看报错里的字段集差异与分布计数（**按容器路径分组**：`at $.entries[]: N distinct key sets…`——顶层不再与数组元素混计；计数是**下界**，扫描在首个冲突合并处短路），手工建模 enum 或补齐键；
-5. **长文本用 `#|` 多行字符串**（D-12）——中文长描述不用拼 `\n`；
+5. **长文本用 `#|` 多行字符串**（D-12）——中文长描述不用拼 `\n`；**`#|` 后的首个空格属于值**（moon 原生语义：`#| 冒泡` 值 = `" 冒泡"`——排版习惯想加空格观感时，`#|` 后直接写内容；「全部 `#|` 行统一前导空格」的形态 doctor 会给 note 提示，#24）；
 6. **大数 >Int64 拒收**（J4020）：降级要求无损——要保留超长数字请以 String 字段承载；
 7. **全 null 列无法推断类型**（J4003）：至少给一个非 null 样本，或手工把字段建成 `Option[T]`；
-8. **注释与尾逗号天然合法**——这是相对 JSON 的核心书写优势，用真注释写「这字段为什么存在」。
+8. **注释与尾逗号天然合法**——这是相对 JSON 的核心书写优势，用真注释写「这字段为什么存在」；输入侧对偶：`import`/`migrate` 默认 jsonc 档（注释/尾逗号/BOM 消解直进，#22/D-9——与 `.json.mbt` 语法侧的尾逗号是两件事）。
 
 ## 迁移面（批量场景）
 
@@ -105,4 +107,4 @@ jsonmbt import x.json --fill x.json.mbt
 | J4020 | 整数超 Int64 | 改 String 字段承载 |
 | J4030/J4031 | hint 级（rc 0）：tagged-enum 识别 / Never 占位提示 | 非错误——按提示优化建模 |
 
-**语法参考全貌**：`src/manual.mbt.md`（可执行手册——「语法参考：与 MoonBit 的对应」大章：文件骨架 / 类型头全集 / 值体全集 / 转义契约 / 数字契约 / 键名两通道 / 空容器占位 / 禁止面；代码块即 `mbt check` fence 锚，`moon test` 逐块执行）。
+**语法参考全貌**：`src/manual.mbt.md`（可执行手册——「语法参考：与 MoonBit 的对应」大章：文件骨架 / 类型头全集 / 值体全集 / 转义契约 / 数字契约 / 键名两通道 / 空容器占位 / 禁止面；「值域枚举与多行文本」大章：enum 值域 / `#|` 前导空格语义 / 键域强校验带参枚举数组；代码块即 `mbt check` fence 锚，`moon test` 逐块执行）。

@@ -100,7 +100,7 @@ fn dir_taken_names(dir : String) -> Array[String] {
 }
 
 ///|
-fn run_migrate(root_arg : String, write : Bool) -> Int {
+fn run_migrate(root_arg : String, write : Bool, jsonc? : Bool = true) -> Int {
   if !dir_exists(root_arg) {
     return jdiag_exit(@src.JIO, "migrate: '\{root_arg}' is not a directory")
   }
@@ -148,13 +148,14 @@ fn run_migrate(root_arg : String, write : Bool) -> Int {
         continue
       }
     }
-    // import（taken 传入 → 跨文件前缀化在此发生）
+    // import（taken 传入 → 跨文件前缀化在此发生；--input 档同口径透传）
     let outcome = Ok(
       @src.import_source(
         raw,
         path=disp,
         stem~,
         taken_names=taken_by_dir[filepath_dir(full)],
+        jsonc~,
       ),
     ) catch {
       e =>
@@ -188,9 +189,9 @@ fn run_migrate(root_arg : String, write : Bool) -> Int {
         ) catch {
           _ => None
         }
-        let value_eq = match (built_compact, parse_for_cmp(raw)) {
+        let value_eq = match (built_compact, parse_for_cmp(raw, jsonc)) {
           (Some(bc), Some(orig)) =>
-            match parse_for_cmp(bc) {
+            match parse_for_cmp(bc, jsonc) {
               Some(bj) => @src.json_value_eq(orig, bj)
               None => false
             }
@@ -271,8 +272,9 @@ fn run_migrate(root_arg : String, write : Bool) -> Int {
 }
 
 ///|
-fn parse_for_cmp(text : String) -> Json? {
-  Some(@src.json_parse(@src.strip_jsonc(text), fname="<cmp>")) catch {
+fn parse_for_cmp(text : String, jsonc : Bool) -> Json? {
+  let stripped = if jsonc { @src.strip_jsonc(text) } else { text }
+  Some(@src.json_parse(stripped, fname="<cmp>")) catch {
     _ => None
   }
 }

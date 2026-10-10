@@ -1,0 +1,9 @@
+﻿{
+  // compiler options (tsconfig-like)
+  "compilerOptions": {
+    "strict": true, /* block note */
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM",],
+  },
+  "exclude": ["node_modules", "dist",],
+}

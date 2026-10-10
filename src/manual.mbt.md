@@ -44,6 +44,32 @@ CLI 形态：`jsonmbt build server.json.mbt` → 同目录 `server.json`；
 
 ## 摄取：JSON/JSONC → `.json.mbt`
 
+**输入 profile（D-9 重写，#22 2026-10-10）**：默认 **jsonc 档**——注释
+（`//`、`/* */`）、尾逗号（对象/数组/嵌套）、文件首 BOM 在 `strip_jsonc`
+归一化器里**等长空格消解**（诊断行列不漂移；`jsonparse` 恒裸 RFC 8259）；
+`--input json` = 裸 RFC 8259（这些特性全拒）。**不收**：`{,}`/`[,]`/
+`[1,,]`/`{"a":,}`（开头/孤立/值缺失逗号）、单引号串、无引号 key、hex、
+`NaN`/`Infinity`——判据：只收「字符层删/替空白可消解为严格 JSON」的
+特性，不收任何 token 层重写（扩值域）。注意与 `.json.mbt` 语法侧的
+「尾逗号天然合法」是两件事：那是 MoonBit 语法，这是输入侧宽松度。
+
+```mbt check
+///|
+test "manual : JSONC 尾逗号消解（值等价）" {
+  let with_tc = @src.import_source(
+    "{\"a\":1, \"b\":[1,2,], // note\n}",
+    path="t.json",
+    stem="t",
+  )
+  let without = @src.import_source(
+    "{\"a\":1, \"b\":[1,2]}",
+    path="t.json",
+    stem="t",
+  )
+  inspect(with_tc.content, content=without.content)
+}
+```
+
 `import_source` 做形状推断（形状签名判重 / D-1 空容器两级启发 /
 D-2 大数上浮 / 键名逃生门），生成带 `@generated` 头的合法 `.json.mbt`：
 
@@ -193,7 +219,9 @@ test "manual : 文件骨架与 stem 同名" {
 record `S::{ ... }`、数组 `[...]`、map 字面量 `{ "键": 值 }`、`Some(v)` /
 `None`、enum 构造器（`Unit` / `Named(Payload)`）、字符串（含 `#|` 多行）、
 数字字面量。**任何计算（`1 + 2`）、标识符引用、跨文件引用 = J3001
-fail loud**（「所见即所得」是降级确定性的前提）。
+fail loud**（「所见即所得」是降级确定性的前提）。值位冗余**圆括号**
+（`A(("x"))`——moon fmt 规范产物形态）剥除后照常收（值语义零变化，
+花括号块仍拒）——「合法 MoonBit 子集」在括号上不比 moon 严（#25）。
 
 ### 字符串转义（契约，#16）
 
@@ -339,3 +367,50 @@ test "manual : #| 多行文本" {
 标量 payload 加 `"value"` 键）；**payload 字段禁止叫 `case`**（J3008；
 `value` 与标量形态同键是登记的已知面——可由 case 值区分）。裸构造器无
 类型上下文时语义不明，保守拒绝（J3001）。
+
+**`#|` 前导空格入值**（issue #24，2026-10-10）：`#| x` 的首空格属于
+值的一部分（moon 原生语义，非 jsonmbt 偏差）——排版习惯写的「`#| 内容`」
+降级后每行都带前导空格。要空格分隔观感又不进值，`#|` 后直接写内容：
+
+```mbt check
+///|
+test "manual : #| 前导空格入值" {
+  let out = @src.build_source(
+    "pub let m = #| 冒泡",
+    path="m.json.mbt",
+    expected_name="m",
+  )
+  inspect(out, content="\" 冒泡\"")
+}
+```
+
+**键域强校验 → 带参枚举数组**（issue #24）：想让「键拼错写时红」的
+有限键集（枚举域），**不要**用 `Map[AlgoE, String]`——Map 字面量键位
+不接受裸构造器，moon 本尊即 `[4014]` Constr Type Mismatch（语言层边界
+非 jsonmbt 限制，本仓探针复核 2026-10-10）。正解 = 带参枚举数组：拼错
+变体名 `moon check` 写时红，降级 `[{"case","value"}]`，下游按 `case`
+值机械投影键名（Vitro 教学资产批 43 算法名实录）：
+
+```mbt check
+///|
+test "manual : 键域强校验——带参枚举数组" {
+  let src =
+    #|enum AlgoSuggestion {
+    #|  BubbleSort(String)
+    #|  QuickSort(String)
+    #|}
+    #|pub let suggestions : Array[AlgoSuggestion] = [
+    #|  BubbleSort("相邻交换，逐步冒泡"),
+    #|  QuickSort("分治分区，递归排序"),
+    #|]
+  inspect(
+    @src.build_source(
+      src,
+      path="s.json.mbt",
+      expected_name="suggestions",
+    ),
+    content="[{\"case\":\"BubbleSort\",\"value\":\"相邻交换，逐步冒泡\"},{\"case\":\"QuickSort\",\"value\":\"分治分区，递归排序\"}]",
+  )
+}
+```
+

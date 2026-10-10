@@ -47,6 +47,13 @@ fn ast_sig(e : @syntax.Expr) -> String {
     }
     Constr(constr~, ..) => "C(\{constr.name.name})"
     Constant(c~, ..) => "K(\{constant_sig(c)})"
+    Group(expr~, group~, ..) => {
+      let g = match group {
+        Paren => "p"
+        Brace => "b"
+      }
+      "G(\{g}, \{ast_sig(expr)})"
+    }
     _ => "OTHER"
   }
 }
@@ -79,6 +86,7 @@ test "R1b-L1 : AST 面快照（L0 白名单全变体，锚死 parser@0.4.3 行�
     #|  i: Some(4),
     #|  j: None,
     #|  k: { n: 5 },
+    #|  l: (("z")),
     #|}
   let (impls, reports) = @parser.parse_string(src, name="snap.json.mbt")
   inspect(reports.length(), content="0")
@@ -88,6 +96,6 @@ test "R1b-L1 : AST 面快照（L0 白名单全变体，锚死 parser@0.4.3 行�
   }
   inspect(
     sig,
-    content="R[T](a:K(i:1), b:K(i:-2), c:K(i64:3), d:K(d:1.5e3), e:K(s:s), f:K(b:true), g:A[K(i:1), K(s:x)], h:M[k:s:k:K(i:1)], i:F(Some, K(i:4)), j:C(None), k:R[-](n:K(i:5)))",
+    content="R[T](a:K(i:1), b:K(i:-2), c:K(i64:3), d:K(d:1.5e3), e:K(s:s), f:K(b:true), g:A[K(i:1), K(s:x)], h:M[k:s:k:K(i:1)], i:F(Some, K(i:4)), j:C(None), k:R[-](n:K(i:5)), l:G(p, G(p, K(s:z))))",
   )
 }

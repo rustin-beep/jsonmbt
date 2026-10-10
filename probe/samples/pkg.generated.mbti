@@ -4,19 +4,34 @@ package "vitro/jsonmbt/probe/samples"
 // Values
 pub let empty_containers : Empty_containers
 
+pub let escapes : Escapes
+
 pub let reserved_keys : Reserved_keys
 
 pub let server : Server
+
+pub let tsconfig_like : Tsconfig_like
 
 pub let vitals : Vitals
 
 // Errors
 
 // Types and methods
+pub struct CompilerOptions {
+  strict : Bool
+  target : String
+  lib : Array[String]
+}
+
 pub struct Empty_containers {
   as_of : String
   exemptions : Array[Never]
   meta : Map[String, Never]
+}
+
+pub struct Escapes {
+  text : String
+  plain : String
 }
 
 pub struct Id {
@@ -43,6 +58,11 @@ pub struct Server {
   host : String
   tags : Array[String]
   retries : Int?
+}
+
+pub struct Tsconfig_like {
+  compilerOptions : CompilerOptions
+  exclude : Array[String]
 }
 
 pub struct Vitals {

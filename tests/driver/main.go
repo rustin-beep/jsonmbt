@@ -228,8 +228,47 @@ func caseProbeSamples(exe, dir string) error {
 			return fmt.Errorf("样本 %s build 产物与黄金不一致\n--golden--\n%q\n--got--\n%q", name, want, got)
 		}
 	}
-	if ran == 0 {
-		return fmt.Errorf("probe/samples 无样本（门禁空转）")
+		if ran == 0 {
+			return fmt.Errorf("probe/samples 无样本（门禁空转）")
+		}
+	// 第二循环（#22/D-9）：JSONC 输入面消费——.jsonc 样本（注释/尾逗号/
+	// BOM 三合一）经 stdin import（-o 出文件名提供 stem）再 build 与
+	// 同名 .json golden 比对（值链等价）；同输入 --input json 档必拒
+	entries2, err := os.ReadDir(filepath.Join("probe", "samples"))
+	if err != nil {
+		return err
+	}
+	for _, e := range entries2 {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".jsonc") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join("probe", "samples", name))
+		if err != nil {
+			return err
+		}
+		mbt := filepath.Join(dir, "l2jsonc.json.mbt")
+		rc, _, stderr, err := runExeWithStdin(exe, dir, string(raw), "import", "-", "-o", mbt)
+		if err != nil || rc != 0 {
+			return fmt.Errorf("样本 %s import rc=%d err=%v stderr=%q（JSONC 消解未生效？）", name, rc, err, stderr)
+		}
+		golden, err := os.ReadFile(filepath.Join("probe", "samples", name[:len(name)-len(".jsonc")]+".json"))
+		if err != nil {
+			return fmt.Errorf("样本 %s 缺 .json 黄金: %w", name, err)
+		}
+		rc, out, _, err := runExe(exe, dir, "build", mbt, "-o", "-")
+		if err != nil || rc != 0 {
+			return fmt.Errorf("样本 %s build rc=%d err=%v", name, rc, err)
+		}
+		if got := bytes.TrimRight(out, "\r\n"); !bytes.Equal(got, bytes.TrimRight(golden, "\r\n")) {
+			return fmt.Errorf("样本 %s JSONC 输入链产物与黄金不一致\n--golden--\n%q\n--got--\n%q", name, golden, got)
+		}
+		// 同输入 json 严格档：三合一特性必拒（P2-6① 的进程级迁移锚；
+		// -o 临时文件名提供 stem，parse 阶段即炸、不落盘）
+		rc, _, stderr, err = runExeWithStdin(exe, dir, string(raw), "import", "-", "--input", "json", "-o", filepath.Join(dir, "l2strict.json.mbt"))
+		if err != nil || rc != 1 || !bytes.Contains(stderr, []byte("[J1002]")) {
+			return fmt.Errorf("样本 %s --input json 应 J1002 拒（rc=%d stderr=%q）", name, rc, stderr)
+		}
 	}
 	return nil
 }
@@ -1061,6 +1100,86 @@ func caseDefaultOutputName(exe, dir string) error {
 	return nil
 }
 
+// caseDoctorPipeHint：issue #24-2b 红→绿锚。
+// 「全部非空 #| 行统一前导空格」是机器可检测的排版信号——moon 语义里
+// `#| x` 的空格入值（" x"），写作者常误以为是分隔符（Vitro 教学资产批
+// 43 条全带前导空格实录）。doctor 对该形态给 note 行（hint 级——
+// 不计 ❌/⚠️、不影响 rc：接线闸不掺内容口味）；对照组（无前导空格）
+// 不得出 note。
+func caseDoctorPipeHint(exe, dir string) error {
+	writeFile(dir, "moon.mod", "name = \"probe/pipe\"\nversion = \"0.1.0\"\n")
+	writeFile(dir, "moon.pkg", "")
+	writeFile(dir, "p.json.mbt",
+		"///|\npub struct P {\n  text : String\n}\n\n///|\npub let p : P = P::{\n  text: #| 第一行\n#| 第二行\n}\n")
+	rc, out, _, err := runExe(exe, dir, "doctor", ".")
+	if err != nil {
+		return err
+	}
+	if rc != 0 {
+		return fmt.Errorf("hint 级不得改 rc，实得 rc=%d\n%s", rc, out)
+	}
+	if !strings.Contains(string(out), "leading space") || !strings.Contains(string(out), "p.json.mbt") {
+		return fmt.Errorf("全前导空格形态应给 note（#24-2b 未实装？）\n%s", out)
+	}
+	// 对照：无前导空格 → 无 note（空格入值是合法语义，只对统一形态提示）
+	writeFile(dir, "q.json.mbt",
+		"///|\npub struct Q {\n  text : String\n}\n\n///|\npub let q : Q = Q::{\n  text: #|第一行\n#|第二行\n}\n")
+	rc, out, _, err = runExe(exe, dir, "doctor", ".")
+	if err != nil {
+		return err
+	}
+	if rc != 0 {
+		return fmt.Errorf("对照 rc=%d\n%s", rc, out)
+	}
+	sec := string(out)
+	// q 段（第二个文件报告）不得含 note；p 段仍含
+	if strings.Count(sec, "leading space") != 1 {
+		return fmt.Errorf("note 应只出现在 p.json.mbt 段（计数=1），实得 %d\n%s", strings.Count(sec, "leading space"), out)
+	}
+	return nil
+}
+
+// caseJsoncInputProfile：issue #22 / D-9 的 --input 旗标进程契约。
+// 值域校验（json|jsonc 之外 J0001 fail loud）+ 非 import/migrate verb
+// 误用拒绝（防静默无效参数——对齐 --type-name-map 的处理）+ json 档
+// 尾逗号拒绝与 jsonc 档消解的最小进程对。
+func caseJsoncInputProfile(exe, dir string) error {
+	writeFile(dir, "tc.json", "{\"a\":1,}")
+	// 别值 fail loud
+	rc, _, stderr, err := runExe(exe, dir, "import", "tc.json", "--input", "yaml")
+	if err != nil || rc != 4 || !bytes.Contains(stderr, []byte("--input accepts")) {
+		return fmt.Errorf("--input yaml 应 rc4 JUsage（rc=%d stderr=%q）", rc, stderr)
+	}
+	// build 误用（build 吃 .json.mbt 不吃 JSON——合法输入上拒绝才证明
+	// 是 --input 专属误用拦截，而非后缀校验的顺带拒绝）
+	writeFile(dir, "b.json.mbt", "pub let b = 1\n")
+	rc, _, stderr, err = runExe(exe, dir, "build", "b.json.mbt", "--input", "jsonc")
+	if err != nil || rc != 4 || !bytes.Contains(stderr, []byte("--input applies to import/migrate only")) {
+		return fmt.Errorf("build --input 应 rc4 拒（rc=%d stderr=%q）", rc, stderr)
+	}
+	// json 档：尾逗号拒
+	rc, _, stderr, err = runExe(exe, dir, "import", "tc.json", "--input", "json", "-o", "-")
+	if err != nil || rc != 1 || !bytes.Contains(stderr, []byte("[J1002]")) {
+		return fmt.Errorf("json 档尾逗号应 J1002（rc=%d stderr=%q）", rc, stderr)
+	}
+	// jsonc 档（默认与显式等价）：消解成功且产物含顶层绑定
+	rc, out, _, err := runExe(exe, dir, "import", "tc.json", "-o", "-")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("默认档（jsonc）应 rc0（rc=%d err=%v）", rc, err)
+	}
+	if !bytes.Contains(out, []byte("pub let tc")) {
+		return fmt.Errorf("默认档产物形态异常: %q", out)
+	}
+	rc, out, _, err = runExe(exe, dir, "import", "tc.json", "--input", "jsonc", "-o", "-")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("显式 jsonc 档应 rc0（rc=%d err=%v）", rc, err)
+	}
+	if !bytes.Contains(out, []byte("pub let tc")) {
+		return fmt.Errorf("显式 jsonc 档产物形态异常: %q", out)
+	}
+	return nil
+}
+
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"migrate-astral-bytes", caseMigrateAstralBytes},
@@ -1092,6 +1211,8 @@ var cases = []testCase{
 	{"never-placeholder", caseNeverPlaceholder},
 	{"fill", caseFill},
 	{"default-output-name", caseDefaultOutputName},
+	{"doctor-pipe-hint", caseDoctorPipeHint},
+	{"jsonc-input-profile", caseJsoncInputProfile},
 }
 
 func defaultExe() string {

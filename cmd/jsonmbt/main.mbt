@@ -49,12 +49,13 @@ fn usage() -> Int {
     "usage:\n" +
     "  jsonmbt build <file.json.mbt...|-> [-o <out.json>|-]\n" +
     "  jsonmbt check <file.json.mbt...|->\n" +
-    "  jsonmbt import <file.json|-> [-o <out.json.mbt>|-] [--check] [--fmt] [--type-name-map <map.json>] [--strict]\n" +
+    "  jsonmbt import <file.json|-> [-o <out.json.mbt>|-] [--check] [--fmt] [--type-name-map <map.json>] [--strict] [--input json|jsonc]\n" +
     "  jsonmbt import <file.json> --fill <file.json.mbt> [--check] — refill the value body from the declared type header\n" +
     "  jsonmbt doctor [dir] — read-only diagnosis: is this repo's .json.mbt really wired into moon?\n" +
-    "  jsonmbt migrate [dir] [--write] — batch scout: byte-eq / value-eq / reject report per .json\n" +
+    "  jsonmbt migrate [dir] [--write] [--input json|jsonc] — batch scout: byte-eq / value-eq / reject report per .json\n" +
     "degrade: .json.mbt -> .json (deterministic, compact); `-` reads stdin, `-o -` writes to stdout\n" +
     "ingest: .json/.jsonc -> .json.mbt (shape inference); --check = idempotence gate; --type-name-map renames derived struct names\n" +
+    "--input: jsonc (default) accepts comments / trailing commas / leading BOM; json = strict RFC 8259\n" +
     "rc: 0 ok / 1 input error (doctor: blocked) / 2 drift detected (--check) / 4 usage/IO",
   )
   4
@@ -203,6 +204,7 @@ fn run_import(
   fmt : Bool,
   type_name_map? : Map[String, String] = Map([]),
   strict? : Bool = false,
+  jsonc? : Bool = true,
 ) -> Int {
   let src = read_input(path) catch {
     e =>
@@ -270,6 +272,7 @@ fn run_import(
     taken_names=taken,
     type_name_map~,
     strict~,
+    jsonc~,
   ) catch {
     e =>
       if e is @src.Diag(..) {
@@ -481,21 +484,36 @@ fn main_rc() -> Int {
     verb != "migrate" {
     return jdiag_exit(@src.JUsage, "unknown command '\{verb}'")
   }
-  // migrate（#6-5）：[dir] [--write]——侦察三榜报告；默认零写
+  // migrate（#6-5）：[dir] [--write] [--input json|jsonc]——侦察三榜报告；默认零写
   if verb == "migrate" {
     let mut dir = "."
     let mut write = false
+    let mut jsonc = true // D-9（#22）：默认 jsonc 档（注释/尾逗号/BOM 消解）
     let mut i = 2
     while i < args.length() {
       let a = args[i]
       if a == "--write" {
         write = true
+      } else if a == "--input" {
+        if i + 1 >= args.length() {
+          return jdiag_exit(@src.JUsage, "--input requires an argument: json | jsonc")
+        }
+        match args[i + 1] {
+          "json" => jsonc = false
+          "jsonc" => jsonc = true
+          _ =>
+            return jdiag_exit(
+              @src.JUsage,
+              "--input accepts 'json' (strict RFC 8259) or 'jsonc' (comments / trailing commas / BOM; default)",
+            )
+        }
+        i = i + 1
       } else if a == "-h" || a == "--help" {
         return usage()
       } else if a.has_prefix("-") {
         return jdiag_exit(
           @src.JUsage,
-          "migrate takes a directory and/or --write (scout report; --write also lands non-reject products)",
+          "migrate takes a directory and/or --write/--input (scout report; --write also lands non-reject products)",
         )
       } else {
         if dir != "." {
@@ -505,7 +523,7 @@ fn main_rc() -> Int {
       }
       i = i + 1
     }
-    return run_migrate(dir, write)
+    return run_migrate(dir, write, jsonc~)
   }
   // doctor（#5）：独立参数面——恰好一个可选目录（默认 "."），无产物 flags
   if verb == "doctor" {
@@ -532,6 +550,8 @@ fn main_rc() -> Int {
   let mut do_indent : Int? = None // --pretty 缩进宽度（#6-1）；None = 未给（提示判据）
   let mut type_map_path : String? = None // import --type-name-map <file>（#6-4）
   let mut do_strict = false // import --strict（#14-2a）：空容器严格档（如旧 J4001/J4002 拒）
+  let mut do_jsonc = true // --input（#22/D-9）：jsonc 档（默认）——false = 裸 RFC 8259
+  let mut input_given = false // --input 显式出现（非 import verb 误用判据——防静默无效参数）
   let mut fill_path : String? = None // import --fill <file>（#14-2b）：按已声明类型重算值体
   let mut i = 2
   while i < args.length() {
@@ -578,6 +598,23 @@ fn main_rc() -> Int {
     } else if a == "--strict" {
       do_strict = true
       i = i + 1
+    } else if a == "--input" {
+      // D-9（#22）：输入 profile 旗标——jsonc（默认）= 注释/尾逗号/BOM
+      // 消解；json = 裸 RFC 8259。不复用 --strict（#14-2a 空容器档已占用）
+      if i + 1 >= args.length() {
+        return jdiag_exit(@src.JUsage, "--input requires an argument: json | jsonc")
+      }
+      input_given = true
+      match args[i + 1] {
+        "json" => do_jsonc = false
+        "jsonc" => do_jsonc = true
+        _ =>
+          return jdiag_exit(
+            @src.JUsage,
+            "--input accepts 'json' (strict RFC 8259) or 'jsonc' (comments / trailing commas / BOM; default)",
+          )
+      }
+      i = i + 2
     } else if a == "--fill" {
       if i + 1 >= args.length() {
         return jdiag_exit(
@@ -645,7 +682,7 @@ fn main_rc() -> Int {
           "--strict tunes empty-container inference; --fill skips inference entirely",
         )
       }
-      return run_fill(paths[0], f, out_opt, do_check, do_fmt)
+      return run_fill(paths[0], f, out_opt, do_check, do_fmt, jsonc=do_jsonc)
     }
     // #6-4：--type-name-map 是 import 专属（build/check 侧先拒——下方
     // 共享解析循环收 flag，非 import verb 到达此处即误用）
@@ -660,6 +697,7 @@ fn main_rc() -> Int {
       do_fmt,
       type_name_map=type_map,
       strict=do_strict,
+      jsonc=do_jsonc,
     )
   }
   // import 专属 flag 出现在其他 verb = 误用（fail loud，防静默无效参数）
@@ -668,6 +706,12 @@ fn main_rc() -> Int {
   }
   if fill_path is Some(_) {
     return jdiag_exit(@src.JUsage, "--fill applies to import only")
+  }
+  if input_given {
+    return jdiag_exit(
+      @src.JUsage,
+      "--input applies to import/migrate only (build takes .json.mbt sources, not JSON)",
+    )
   }
   if paths.length() > 1 && out_opt is Some(_) {
     return jdiag_exit(@src.JUsage, "-o accepts a single input")
@@ -779,6 +823,7 @@ fn run_fill(
   out_opt : String?,
   check : Bool,
   fmt : Bool,
+  jsonc? : Bool = true,
 ) -> Int {
   let src = read_input(path) catch {
     e =>
@@ -808,6 +853,7 @@ fn run_fill(
     path~,
     fill_path=fill_target,
     stem~,
+    jsonc~,
   ) catch {
     e =>
       if e is @src.Diag(..) {

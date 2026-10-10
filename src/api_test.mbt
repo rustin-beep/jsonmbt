@@ -223,3 +223,24 @@ test "D-11 双维度锚 : 值语义 1 ≡ 1.0（N 层）；降级文本 1 ≠ 1.
   )
   inspect(s1 == s2, content="false")
 }
+
+///|
+test "#25 : 冗余圆括号包裹剥除（Group::Paren——moon fmt 产物可读）" {
+  // A(("x")) / A((#| 多行)) 是合法 MoonBit（moon fmt 幂等保留该形态——
+  // 真源进 fmt 跑的 workspace 后被 jsonmbt 拒是互操作 bug）：圆括号不
+  // 改值语义，与 A("x") 严格等价；多层括号递归剥
+  let src =
+    #|enum A { A(String) }
+    #|pub let t : Array[A] = [
+    #|  A("plain"),
+    #|  A(("double")),
+    #|  A((
+    #|#| 多行
+    #|)),
+    #|  A((("triple"))),
+    #|]
+  inspect(
+    @src.build_source(src, path="t.json.mbt", expected_name="t"),
+    content="[{\"case\":\"A\",\"value\":\"plain\"},{\"case\":\"A\",\"value\":\"double\"},{\"case\":\"A\",\"value\":\" 多行\"},{\"case\":\"A\",\"value\":\"triple\"}]",
+  )
+}

@@ -209,6 +209,15 @@ fn l0_expr(
       Json::array(arr)
     }
     Map(elems~, loc~) => l0_map(env, enums, elems, ty, depth, loc)
+    Group(expr~, group~, loc~) =>
+      // #25：冗余圆括号剥除——Group(Paren) 是 moon fmt 规范产物形态
+      //（真源进 fmt 跑的 workspace 后 jsonmbt 拒合法 MoonBit 属互操作
+      // bug）；圆括号不改值语义，递归剥（多层括号自然解）。花括号块
+      // = 副作用序列面，非字面量
+      match group {
+        Paren => l0_expr(env, enums, expr, ty, depth + 1)
+        Brace => raise not_literal(loc, "braced block")
+      }
     Apply(func~, args~, loc~) => {
       // Some(v)：func = Constr(Some)，单个位置参数（探针实锤形态）
       let is_some = func is Constr(constr~, ..) && constr.name.name == "Some"

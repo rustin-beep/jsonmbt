@@ -135,6 +135,31 @@ fn scan_type_name_clashes(dir : String) -> Array[(String, Array[String])] {
 }
 
 ///|
+/// #24-2b：「全部非空 #| 行统一前导空格」排版信号判定——moon 语义里
+/// `#| x` 的空格入值（" x"），统一形态大概率是排版习惯而非语义意图。
+/// 空行（净内容空）与纯空格行（净内容单空格）不参与统计（排版间隔的
+/// 归属语义模糊，保守跳过）；行首缩进的 #| 不参与（moon 标记顶格——
+/// 漏报无害，hint 是启发非闸）
+fn pipe_lines_all_spaced(text : String) -> Bool {
+  let mut content = 0
+  let mut spaced = 0
+  for line in text.split("\n") {
+    let l : StringView = line
+    if l.has_prefix("#|") {
+      let rest : StringView = l["#|".length():]
+      if rest.length() == 0 || (rest[0] == ' ' && rest.length() == 1) {
+        continue
+      }
+      content = content + 1
+      if rest[0] == ' ' {
+        spaced = spaced + 1
+      }
+    }
+  }
+  content > 0 && spaced == content
+}
+
+///|
 /// 行首顶层声明形态 → 类型名（"pub struct X {" / "struct X {" /
 /// "pub enum E" / "enum E"；字段行/缩进行不匹配）
 fn top_level_type_name(line : StringView) -> String? {
@@ -422,6 +447,14 @@ fn run_doctor(root_arg : String) -> Int {
         if check_ok {
           print_out("  ✅ check/build — ok")
           src_ok = true
+          // #24-2b：全部非空 #| 行统一前导空格 → 排版信号 note（hint 级，
+          // 不计 warned/blocked——接线闸不掺内容口味）。空格入值是 moon
+          // 语义非 jsonmbt 偏差；统一形态大概率是排版习惯而非语义意图
+          if pipe_lines_all_spaced(text) {
+            print_out(
+              "  note: every #| line starts with a leading space — that space is part of the value (moon semantics); strip it in the source if unintended",
+            )
+          }
         } else {
           bad = true
         }

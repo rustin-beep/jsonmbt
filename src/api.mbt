@@ -114,11 +114,12 @@ pub fn import_source(
   taken_names? : Array[String] = [],
   type_name_map? : Map[String, String] = Map([]),
   strict? : Bool = false,
+  jsonc? : Bool = true, // D-9（#22）：false = 裸 RFC 8259（注释/尾逗号/BOM 全拒）
 ) -> ImportOutcome raise Diag {
   // stem 前置清洗（化石批量实锤："array_address.c" 文件名直接作 stem 产
   // 非法 binding/类型名——曾靠生成保险丝兜底成 internal 错，现正名）
   let stem = sanitize_stem(stem)
-  let stripped = strip_jsonc(json_text)
+  let stripped = if jsonc { strip_jsonc(json_text) } else { json_text }
   let root = json_parse(stripped, fname=path)
   let result = infer_shapes(
     root,
@@ -215,9 +216,13 @@ pub fn fill_source(
   path? : String = "<json>",
   fill_path? : String = "",
   stem~ : String,
+  jsonc? : Bool = true, // D-9（#22）：与 import_source 同口径
 ) -> String raise Diag {
   let stem = sanitize_stem(stem)
-  let root = json_parse(strip_jsonc(json_text), fname=path)
+  let root = json_parse(
+    if jsonc { strip_jsonc(json_text) } else { json_text },
+    fname=path,
+  )
   // 既有产物必须先过自家校验（合法 .json.mbt 才有可用的类型头）
   let expected_name = Some(stem)
   let doc = analyze(existing_src, path=fill_path, expected_name?)

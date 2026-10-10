@@ -232,14 +232,93 @@ test "RFC 8259 §7 : 字符串内裸控制字符拒绝" {
 }
 
 ///|
-test "P2-6① : import 侧 JSON 语法错码值锚（尾逗号不是 JSON）" {
+test "D-9 : json 严格档裸 RFC 8259——尾逗号/注释/BOM 全拒（P2-6① 迁移）" {
+  // --input json（jsonc=false）= 对拍基准路径：任何宽松特性不消解。
+  // P2-6① 原锚（尾逗号 → J1002）在此档永久保留——防线拆档非删除
   let d = try {
-    let _ = do_import("{\"a\":1,}")
+    let _ = @src.import_source(
+      "{\"a\":1,}",
+      path="t.json",
+      stem="t",
+      jsonc=false,
+    )
     "SUCCEEDED"
   } catch {
     e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
   }
   inspect(d.contains("[J1002]"), content="true")
+  let c = try {
+    let _ = @src.import_source(
+      "{ // c\n\"a\":1}",
+      path="t.json",
+      stem="t",
+      jsonc=false,
+    )
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(c.contains("[J1002]"), content="true")
+}
+
+///|
+test "D-9 : 尾逗号消解——值等价（#22 默认档 jsonc）" {
+  // 消解式：strip_jsonc 是唯一宽松层，尾逗号在 pre-pass 等长空格消解，
+  // jsonparse 恒裸 RFC 8259。同值异形（尾逗号有无）产同一产物。
+  let with_tc = do_import(
+    "{\"a\":1 , \"b\":[1, 2 ,], \"c\":{\"d\":2 ,}, \"e\":[[1,],[2,],],}",
+  )
+  let without = do_import(
+    "{\"a\":1, \"b\":[1, 2], \"c\":{\"d\":2}, \"e\":[[1],[2]]}",
+  )
+  inspect(with_tc, content=without)
+}
+
+///|
+test "D-9 : 尾逗号暂存穿透注释（\", // c \\n }\" 形态）" {
+  // tsconfig 真实形态：尾逗号后跟行注释再闭括号——pending-comma 的
+  // 暂存必须穿透空白**与注释**看有效字符才判定消解
+  let with_tc = do_import(
+    "{\"a\":1, // note\n \"b\":2, /* blk\n still note */}",
+  )
+  let without = do_import("{\"a\":1, \"b\":2}")
+  inspect(with_tc, content=without)
+}
+
+///|
+test "D-9 : BOM 文件首消解 + 字符串内 U+FEFF 保留" {
+  // BOM 仅消解文件首字符（RFC 8259 字符串内允许任意 Unicode——U+FEFF
+  // 是合法字符，全文件替换会破数据）
+  let _ = do_import("\u{FEFF}{\"a\":1}") // 不再 J1002 拒
+  let bom = do_import("\u{FEFF}{\"a\":1}")
+  inspect(bom.contains("a : Int"), content="true")
+  let s = do_import("{\"a\":\"\u{FEFF}x\"}")
+  inspect(s.contains("\u{FEFF}x"), content="true")
+}
+
+///|
+test "D-9 : 开头/孤立/值缺失逗号不收（last_sig guard——防 [,] 超收）" {
+  expect_import_diag("{,}", "J1002")
+  expect_import_diag("[,]", "J1002")
+  expect_import_diag("[1,,]", "J1002")
+  // `[1,2,,]`：孤立逗号消解与否都被 parser 拒（前逗号顶位），但 last_sig
+  // 在 flush 时漏更新会让报错从逗号本位（U+002C）漂到闭合括号（U+005D）
+  // ——与「保位」锚配对钉住 guard（埋雷实锤：禁用 guard 保位锚先红）
+  expect_import_diag("[1,2,,]", "J1002")
+  expect_import_diag("{\"a\":,}", "J1002")
+}
+
+///|
+test "D-9 : 消解保位——错误行列不漂移（等长空格替换）" {
+  // [1, /* c */ ,] 的孤立逗号保留 → parser 在原字符位报错（U+002C @1:13，
+  // 等长替换不挪位）——含注释前缀的列位断言即回归锚
+  let d = try {
+    let _ = do_import("[1, /* c */ ,]")
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d.contains("[J1002] t.json:1:13"), content="true")
 }
 
 ///|
@@ -1063,7 +1142,7 @@ test "import : 数组元素 null 提升 Option（#20）——契约要求产出�
 
 ///|
 test "import : JSON 语法错报错码点用十六进制（#22 附带——十进制冒充 U+XXXX 误导定位）" {
-  // 尾逗号本身仍是拒绝态（既有锚 P2-6① 钉死；是否放开见 jsonmbt#22 的 A/B 裁定）。
+  //   #22 落地后注：尾逗号在 jsonc 默认档已消解（json 档仍拒——P2-6① 迁移锚钉死）。
   // 本条只钉报错文案：旧实现 `U+\{c.to_int()}` 把**十进制**码点接在 U+ 后
   // （`]` = U+005D = 93 十进制 → 报成 "U+93"）。
   let d = try {
@@ -1074,3 +1153,4 @@ test "import : JSON 语法错报错码点用十六进制（#22 附带——十�
   }
   inspect(d.contains("U+0040"), content="true")
 }
+
