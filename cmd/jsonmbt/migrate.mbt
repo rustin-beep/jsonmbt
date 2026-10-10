@@ -145,6 +145,7 @@ fn run_migrate(root_arg : String, write : Bool, jsonc? : Bool = true) -> Int {
   }
   let mut n_byte = 0
   let mut n_value = 0
+  let mut n_layout = 0 // #30：仅排版差（紧凑归一逐字节等）
   let mut n_reject = 0
   for f in files {
     let (disp, full) = f
@@ -212,6 +213,14 @@ fn run_migrate(root_arg : String, write : Bool, jsonc? : Bool = true) -> Int {
             }
           _ => false
         }
+        // #30 LAYOUT-EQ：仅排版差——原文件 parse 后紧凑归一与 built_compact
+        // **逐字节**等（值树+键序+转义规范形全等，差只在源文件的空白/换行
+        // 布局）。字符层"剥空白"会误伤字符串值内的语义空白，故用对称归一；
+        // 转义形态差（\u4e2d vs 中）与键序差正确落 VALUE-EQ
+        let layout_eq = match (built_compact, parse_for_cmp(raw, jsonc)) {
+          (Some(bc), Some(orig)) => orig.stringify() == bc
+          _ => false
+        }
         let mut kind = "DIFF (round-trip mismatch — please report)"
         match built_pretty {
           Some(bp) =>
@@ -230,6 +239,10 @@ fn run_migrate(root_arg : String, write : Bool, jsonc? : Bool = true) -> Int {
               }
             None => ()
           }
+        }
+        if kind == "DIFF (round-trip mismatch — please report)" && layout_eq {
+          kind = "LAYOUT-EQ (whitespace only)"
+          n_layout = n_layout + 1
         }
         if kind == "DIFF (round-trip mismatch — please report)" && value_eq {
           kind = "VALUE-EQ"
@@ -272,7 +285,7 @@ fn run_migrate(root_arg : String, write : Bool, jsonc? : Bool = true) -> Int {
     }
   }
   print_out(
-    "\nsummary: \{files.length()} file(s): \{n_byte} byte-eq, \{n_value} value-eq, \{n_reject} reject",
+    "\nsummary: \{files.length()} file(s): \{n_byte} byte-eq, \{n_layout} layout-eq, \{n_value} value-eq, \{n_reject} reject",
   )
   if n_value > 0 {
     print_out(

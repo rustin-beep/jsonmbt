@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+### Fixed（issue #31：保留字 stem 断链——D-7 期望名全链统一走 sanitize_stem）
+
+- **现象**：`type.json`/`in.json`/`match.json` 等保留字文件名——import 按 `sanitize_stem` 产 `x_type` 绑定（rc=0 合法产物），CLI build/check 用 **stem 原文**做 D-7 校验 → J2003「import 成功、build 即红」；doctor 同病误诊（让人去改名而非暴露口径不一致）
+- **修法（方案 1+3 合体）**：消费侧两处对齐（`main.mbt` run_one 与 `doctor.mbt` 各一处 `expected_name` 走 `@src.sanitize_stem`，match 形态保 None 传播语义）+ **D-7 语义成文**：绑定名 == `sanitize_stem(stem)`（确定性映射；常规 stem 恒等 → 既有文件零行为变化）——PLAN D-7 行、api 注释、skill 规则 2 三处同步
+- **锚**：层 2 新锚 `reserved-stem-chain`（import→build→check→doctor 四路全链 + 常规 stem 错名仍 J2003 回归锚）；埋雷证红（临时还原 build 侧原文校验 → 断链锚红）
+- 门禁：层 1 **120/120**（无涉回归确认）、层 2 **34/34**（双 exe）
+
+### Added（issue #30 裁定落地：migrate 四榜 LAYOUT-EQ 档 + pretty 字节口径钉死——用户裁定，撤 prettier 内联参数案）
+
+- **定性修正（用户论证，本仓采纳）**：pretty 档「恒展开数组」不是能力缺口而是**选定设计**——`build_source` 的 pretty 分支就一行标准库 `stringify(indent)`（布局策略归 moon 标准库），语义锚自始是 **Go `json.Encoder` 口径**（api.mbt 注释 + 层 2 `pretty-vs-go-encoder` 锚在跑 + Go indent 同样展开单元素数组）——42.9% BYTE-EQ 量的是样本构成（人写占比），不是产品能力；**prettier 内联参数案撤销**（双主人冲突威胁 Vitro Go 口径门禁 + prettier 是随版本漂的全局 doc 算法）
+- **结构性死结成文**：`.json.mbt` 是类型化重写非保格式载体——源布局信息 import 时已丢、降级产物重新序列化，「逐字节还原人写源」架构上不可达（塞布局元数据违背类型即 Schema）；prettier 口径若成真需求走显式 `--profile` 独立档（默认产物一字不动）
+- **migrate 三榜 → 四榜**：新档 **LAYOUT-EQ (whitespace only)**——原文件 parse 紧凑归一与 built_compact **逐字节**等（值树+键序+转义规范形全等，差只在排版与表示；字符层剥空白会误伤字符串值内语义空白，故对称归一）——人写/prettier 源大多落此（issue 实测 107/129 张形态），「值层面可替换性」可见；VALUE-EQ 收窄为表示差不归一形态（如 `1e2`——.json.mbt 侧写不出的指数记法〔陷阱 #13〕）；summary 行四榜计数
+- 层 2 `migrate-three-boards` 随迁（layout 样本=人写短数组内联形态 + value 样本换 `1e2`；**转义形态差 `\u4e2d` 被对称归一消解落 LAYOUT——分层比原设想更准**：转义差与空白差同属「重新序列化会归一」的表示差）
+- 文档口径三处：README 契约清单（字节口径条目）/ INTEGRATION.md（口径 blockquote + 死结说明）/ skill（四榜 + 迁移面口径）
+- 门禁：层 1 **120/120**（无涉回归确认）、层 2 **33/33**（双 exe）
+
 ### Fixed（issue #27/#28/#29：随机 12 项目实测批三 bug——静默改写/词法对齐/漏扫）
 
 - **#27 Map 键不反转义（静默数据改写，P1 级）**：`l0_map` 键曾直拼源码原文——含 `\` `"` 转义的键（jest transform 正则键形态）降级多转义一层、值被静默改写且 check 过；按处方一行修（`unescape_string(raw, el.key_loc)`——与字段值路径同款），重复键判定随之按解码值（D-11）。**migrate DIFF 哨兵首次在第三方真实数据抓到真缺陷**（nestjs sample/*/jest.json，4/608 张）；验收：紧凑原源往返逐字节回源、migrate 判 BYTE-EQ

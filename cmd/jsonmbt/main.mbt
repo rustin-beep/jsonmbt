@@ -752,7 +752,17 @@ fn run_one(
         return jdiag_exit(@src.JIO, "cannot read '\{path}'")
       }
   }
-  let expected_name = if path == "-" { None } else { stem_of(path) }
+  // #31：期望名走 sanitize_stem（与 import 同口径——保留字 stem〔type/in/
+  // match…〕import 产 x_type 绑定，曾用原文校验必 J2003：链路断在第二步）。
+  // D-7 语义 = 绑定名 == sanitize_stem(stem)：确定性映射，常规 stem 恒等
+  let expected_name = if path == "-" {
+    None
+  } else {
+    match stem_of(path) {
+      Some(s) => Some(@src.sanitize_stem(s))
+      None => None
+    }
+  }
   let display = if path == "-" { "<stdin>" } else { path }
   // check = build 的 dry-run（同一条校验路径——D-8）
   if verb == "check" {

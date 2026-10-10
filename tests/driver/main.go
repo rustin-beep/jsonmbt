@@ -92,6 +92,55 @@ func caseBuildDeterministic(exe, dir string) error {
 	return nil
 }
 
+// caseReservedStemChain：issue #31 锚。
+// 保留字文件名（type.json 等）：import 按 sanitize_stem 产 x_type 绑定
+// （rc=0 合法产物），但 build/check 曾用 stem 原文做 D-7 校验 → J2003
+// 「import 成功、build 即红」的断链；doctor 同病误诊。修后四路
+// （import/build/check/doctor）统一「绑定名 == sanitize_stem(stem)」。
+func caseReservedStemChain(exe, dir string) error {
+	writeFile(dir, "type.json", "{\"a\":1}\n")
+	rc, _, _, err := runExe(exe, dir, "import", "type.json")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("import rc=%d err=%v", rc, err)
+	}
+	src, err := os.ReadFile(filepath.Join(dir, "type.json.mbt"))
+	if err != nil {
+		return fmt.Errorf("产物未落盘: %v", err)
+	}
+	if !bytes.Contains(src, []byte("pub let x_type")) {
+		return fmt.Errorf("保留字 stem 应产 x_type 绑定: %q", src)
+	}
+	// 断链点：build（曾 J2003）
+	rc, out, _, err := runExe(exe, dir, "build", "type.json.mbt", "-o", "-")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("build 应消费自家 import 产物（#31 断链）rc=%d out=%q err=%v", rc, out, err)
+	}
+	if !bytes.Contains(out, []byte(`{"a":1}`)) {
+		return fmt.Errorf("build 产物形态异常: %q", out)
+	}
+	// check 同口径
+	if rc, _, _, err := runExe(exe, dir, "check", "type.json.mbt"); err != nil || rc != 0 {
+		return fmt.Errorf("check rc=%d err=%v", rc, err)
+	}
+	// doctor 误诊面：check/build 项应为 ✅（无 moon 环境时 fmt 项 ⚠️ 不计）
+	if err := os.WriteFile(filepath.Join(dir, "moon.pkg"), []byte("\n"), 0o644); err != nil {
+		return err
+	}
+	rc, dout, _, err := runExe(exe, dir, "doctor", ".")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("doctor rc=%d（保留字 stem 不应挡住）\n%s err=%v", rc, dout, err)
+	}
+	if !bytes.Contains(dout, []byte("✅ check/build — ok")) {
+		return fmt.Errorf("doctor 的 check/build 项应全绿（曾误诊 J2003）\n%s", dout)
+	}
+	// 常规 stem 回归：D-7 对非保留字恒等（错名仍拒）
+	writeFile(dir, "plain.json.mbt", "pub let other = 1\n")
+	if rc, _, stderr, _ := runExe(exe, dir, "build", "plain.json.mbt", "-o", "-"); rc != 1 || !bytes.Contains(stderr, []byte("[J2003]")) {
+		return fmt.Errorf("错名绑定仍应 J2003（rc=%d stderr=%q）", rc, stderr)
+	}
+	return nil
+}
+
 // import-check-idempotent：幂等闸绿（rc 0）→ 篡改产物证红（rc 2 + J5001）。
 func caseImportCheckGate(exe, dir string) error {
 	// 语料含嵌套对象（审 P1：原语料无嵌套 → 不产嵌套 struct → scan/幂等
@@ -819,8 +868,13 @@ func caseCrossFileTakenDedup(exe, dir string) error {
 func caseMigrate(exe, dir string) error {
 	// byte-eq（pretty）：2 空格缩进原文件 = build --pretty 逐字节
 	writeFile(dir, "cfg.json", "{\n  \"port\": 8080,\n  \"host\": \"localhost\"\n}")
-	// value-eq：1 空格缩进（风格差——值等键序同）
-	writeFile(dir, "style.json", "{\n \"a\": 1,\n \"b\": [2, 3]\n}")
+	// layout-eq（#30）：prettier/人写形态（多行+短数组内联）——pretty 档
+	// 恒展开数组（Go json.Encoder 口径），但紧凑归一后逐字节等 → 仅排版差
+	writeFile(dir, "layout.json", "{\n  \"compilerOptions\": {\n    \"types\": [\"vitest/globals\"],\n  },\n}")
+	// value-eq：转义形态差（源 \u4e2d vs 产物裸 UTF-8——值等、紧凑归一不等）
+	// value-eq：数字表示差（源 1e2——.json.mbt 侧写不出的指数形态〔陷阱
+	// #13〕，紧凑归一不等、值等；转义差 \u4e2d vs 中被对称归一消解落 LAYOUT）
+	writeFile(dir, "style.json", "{\"s\": 1e2}")
 	// reject：异构数组
 	writeFile(dir, "bad.json", `{"rows": [1, "a"]}`)
 	rc, out, _, err := runExe(exe, dir, "migrate", ".")
@@ -833,9 +887,10 @@ func caseMigrate(exe, dir string) error {
 	s := string(out)
 	for _, frag := range []string{
 		"cfg.json", "BYTE-EQ",
+		"layout.json", "LAYOUT-EQ",
 		"style.json", "VALUE-EQ",
 		"bad.json", "REJECT", "[J4010]",
-		"summary: 3 file(s): 1 byte-eq, 1 value-eq, 1 reject",
+		"summary: 4 file(s): 1 byte-eq, 1 layout-eq, 1 value-eq, 1 reject",
 	} {
 		if !strings.Contains(s, frag) {
 			return fmt.Errorf("报告缺 %q:\n%s", frag, s)
@@ -848,11 +903,11 @@ func caseMigrate(exe, dir string) error {
 			return fmt.Errorf("默认模式不得写盘，发现 %s", e.Name())
 		}
 	}
-	// --write：非 reject 落盘（cfg/style 两张）
+	// --write：非 reject 落盘（cfg/layout/style 三张）
 	if rc, _, _, err := runExe(exe, dir, "migrate", ".", "--write"); err != nil || rc != 1 {
 		return fmt.Errorf("--write rc=%d err=%v（reject 仍在，rc 1）", rc, err)
 	}
-	for _, name := range []string{"cfg.json.mbt", "style.json.mbt"} {
+	for _, name := range []string{"cfg.json.mbt", "layout.json.mbt", "style.json.mbt"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			return fmt.Errorf("--write 未落盘 %s: %v", name, err)
 		}
@@ -1225,6 +1280,7 @@ var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"migrate-astral-bytes", caseMigrateAstralBytes},
 	{"migrate-dotdirs", caseMigrateDotDirs},
+	{"reserved-stem-chain", caseReservedStemChain},
 	{"probe-samples-golden", caseProbeSamples},
 	{"build-stdout-deterministic", caseBuildDeterministic},
 	{"import-check-idempotent", caseImportCheckGate},

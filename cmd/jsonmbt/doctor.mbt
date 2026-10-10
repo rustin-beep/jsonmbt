@@ -433,7 +433,12 @@ fn run_doctor(root_arg : String) -> Int {
         bad = true
       }
       Some(text) => {
-        let expected_name = stem_of(full)
+        // #31：与 import/build 同口径走 sanitize_stem（保留字 stem 曾被
+        // 误诊为「绑定名不匹配」——其实是四路 expected_name 口径不一致）
+        let expected_name = match stem_of(full) {
+          Some(s) => Some(@src.sanitize_stem(s))
+          None => None
+        }
         let check_ok = try {
           let _ = @src.check_source(text, path=disp, expected_name?)
           let _ = @src.build_source(text, path=disp, expected_name?)

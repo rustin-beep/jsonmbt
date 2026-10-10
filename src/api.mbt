@@ -66,6 +66,8 @@ pub(all) struct ImportOutcome {
 ///|
 /// stem → 合法 binding（label 域标识符）：非法字符→下划线、大写→小写、
 /// 数字/非法开头→x_ 前缀、空→x。类型命名（capitalize）共用此基。
+/// #31：D-7 期望名全链统一走本函数（import 自校验 + CLI build/check +
+/// doctor）——绑定名 == sanitize_stem(stem)，常规 stem 恒等
 pub fn sanitize_stem(name : String) -> String {
   // 审 P2-1：保留字文件名（test.json/type.json 等 16 个实测 15 个中招）
   // 直接作 binding 是非法 MoonBit——同族 is_legal_label 查保留字而此路

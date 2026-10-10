@@ -23,7 +23,7 @@ jsonmbt import  x.json [--input json|jsonc]  # 输入 profile：默认 jsonc（�
 jsonmbt build   x.json.mbt -o x.json      # 确定性降级（同输入永同输出；失败零产物）
 jsonmbt build   x.json.mbt -o -           # build 链纯验证：stdout 出件（check 不跑降级链）
 jsonmbt check   x.json.mbt                # 只验不写（校验+内存构造，无降级 codegen）
-jsonmbt migrate  [dir] [--write] [--input json|jsonc]  # 批量迁移侦察：三榜报告（默认零写；rc 1=有 reject）
+jsonmbt migrate  [dir] [--write] [--input json|jsonc]  # 批量迁移侦察：四榜报告（默认零写；rc 1=有 reject）
 jsonmbt doctor   [dir]                    # 只读诊断：.json.mbt 是否真接上 moon 工具链（四项）
 ```
 
@@ -38,7 +38,7 @@ rc 语义：`0` ok / `1` 输入错 / `2` 漂移（--check）/ `4` 用法错。CI
 1b. **字符串转义契约**（#16）：`.json.mbt` 侧接受 moon 词法接受的一切（`\' \" \\ \/ \n \r \t \b \f \0 \xHH \u{...} \uXXXX`，含代理对合成；孤立代理拒）；降级输出 = 最小转义集 + 非 ASCII 裸 UTF-8（同值异形输入产同一规范形）；
 1c. **数字降级契约**（#17）：整数族解析值归一（`-0`→`0`、`0x10`→`16`）；`Double` 源拼写透传（`1.50` 原样——避免精度伪影）；Int64 全精度文本保留；
 1d. **空容器占位**（#14-2a）：import 遇推断无线索的空数组/空对象 → `Array[Never]` / `Map[String, Never]`（产物自带 `pub enum Never {}`——零构造器 = 免费护栏，元素位写值 moon `[4014]` 红）；`--strict` 恢复旧拒绝（J4001/J4002 只在 strict 档出现）；手写空容器字段直接声明真元素类型（`Array[String]` + `[]`）即无此面；
-2. **一个文件一个顶层文档**：`foo.json.mbt` 内有且只有一个 `pub let foo : ...`——**绑定名必须等于文件 stem**（J2003 会指路）；
+2. **一个文件一个顶层文档**：`foo.json.mbt` 内有且只有一个 `pub let foo : ...`——**绑定名 = sanitize_stem(文件 stem)**（常规 stem 恒等；保留字/数字开头文件名确定性加 `x_` 前缀：`type.json` 产物绑定 `x_type`，import/build/check/doctor 四路同口径，#31）；
 3. **键集不齐的数组用带参 enum**（D-5）：每种键集一个 struct，`enum Case { A(Ax); B(Bx) }`，字面量 `A(Ax::{ field: value })`。降级投影 = tag 对象展开（payload 进顶层 + `"case"` tag 键）；**payload 字段禁止叫 `case`**（J3008 显式拒）；**payload 形参也可以是 enum 名**（`enum Field { Named(Col) }` + `Named(X)`——标量 payload 走 `{"case":…,"value":…}` 形态）；已知面：struct payload 含 `value` 字段展平后与标量 payload 的 `value` 键同形（J3008 只防 `case` 不防 `value`——实际可由 case 值区分，登记不修）；
 3a. **键域强校验（有限键集「拼错红」）→ 带参枚举数组**（#24）：`enum AlgoSuggestion { BubbleSort(String); … }` + `[BubbleSort("文案"), …]`——拼错变体名 moon check 写时红；降级 `[{"case":"BubbleSort","value":"…"}]`，下游按 case 值机械投影键名。**别用 `Map[AlgoE, String]`**：Map 字面量键位不接受裸构造器——moon 本尊即 `[4014]` Constr Type Mismatch（语言层边界非 jsonmbt 限制；Vitro 教学资产批两轮探针实录）；
 4. **import 不自动转缺键异构**（J4010/J4011 fail loud）——拼错字段名与真可选无法区分，自动推断会把数据错误静默类型化。遇拒看报错里的字段集差异与分布计数（**按容器路径分组**：`at $.entries[]: N distinct key sets…`——顶层不再与数组元素混计；计数是**下界**，扫描在首个冲突合并处短路），手工建模 enum 或补齐键；
@@ -49,7 +49,7 @@ rc 语义：`0` ok / `1` 输入错 / `2` 漂移（--check）/ `4` 用法错。CI
 
 ## 迁移面（批量场景）
 
-1. **第一入口 = `jsonmbt migrate [dir]`**：三榜侦察（BYTE-EQ 可直进 CI 对账 / VALUE-EQ 值等仅风格差须确认字节口径 / REJECT 带 J 码原因）——别再手写「逐张 import → cmp → 分类」shell 脚本；默认零写，`--write` 才落盘非 reject 产物；
+1. **第一入口 = `jsonmbt migrate [dir]`**：四榜侦察（**BYTE-EQ** 可直进 CI 对账——仅限「机器生成且格式策略一致」的源 / **LAYOUT-EQ**（#30）值+键序+转义规范形全等、差只在排版与表示（人写/prettier 源大多落此——值层面可无感替换，字节层不可）/ **VALUE-EQ** 值等但表示差不归一（如 `1e2` 指数形态——.json.mbt 侧写不出）/ REJECT 带 J 码原因）——别再手写「逐张 import → cmp → 分类」shell 脚本；默认零写，`--write` 才落盘非 reject 产物；**字节口径**：`--pretty` 语义锚 = Go `json.Encoder`（数组恒展开），不承诺对齐 prettier——「逐字节还原人写源」架构上不可达（.json.mbt 是类型化重写非保格式载体，布局信息 import 时已丢）；
 2. **撞名前缀化**：同目录多文件嵌套 struct 重名时后来者加 stem 前缀（`Id` → `BId`）——migrate 报告会 note 指路；语义命名入口 = `--type-name-map`（键 = 产物里的最终派生名，逐条改语义名）；
 3. **接入诊断**：迁移完先跑 `jsonmbt doctor [dir]`——「文件在不在 moon 包边界内、有没有真被编译」是返工两轮换来的最大坑（moon 看不见 = 验证了没被编译的东西）。
 

@@ -76,7 +76,15 @@ moon check
 
 之后 `.json.mbt` 就是唯一真相源，`.json` 由 `jsonmbt build --pretty` 再生给下游消费者
 （`build` 默认输出紧凑 JSON；**若下游按字节锚定对账，必须加 `--pretty`**，它对齐 Go
-`json.Encoder.SetIndent` 的形态）。
+`json.Encoder.SetIndent` 的形态——数组恒逐元素展开，含单元素）。
+
+> **字节口径（#30 钉死）**：`--pretty` 的语义锚是 **Go `json.Encoder` 那一族**，不是
+> prettier。BYTE-EQ 只承诺「源是机器生成且格式策略一致（紧凑 / Go indent=2 族）」的
+> 文件；人写 / prettier 风格源承诺**值层面等价**（`migrate` 报告的 LAYOUT-EQ /
+> VALUE-EQ 档）。结构上「逐字节还原人写源」**不可达**：`.json.mbt` 是类型化重写而非
+> 保格式载体——源的布局信息 import 时已丢，降级产物是重新序列化生成的；往类型头塞
+> 布局元数据违背「类型即 Schema」的核心价值。prettier 口径若成真需求，走显式
+> `--profile` 独立档（默认产物一字不动）。
 
 ## 多模块仓：`moon.work`
 
