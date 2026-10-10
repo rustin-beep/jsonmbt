@@ -733,8 +733,11 @@ fn l0_map(
   }
   let obj : Map[String, Json] = Map([])
   for el in elems {
+    // #27：键取**解码值**（与 :554 字段值路径同款 unescape）——曾直拼源码
+    // 原文，含 \ " 或转义序列的键（jest transform 正则键等）降级时被多转义
+    // 一层 = 静默数据改写；重复键判定随之按解码值（D-11 值语义）
     let key = match el.key {
-      String(raw) => raw
+      String(raw) => unescape_string(raw, el.key_loc)
       other =>
         raise Diag(
           code=JMapKey,

@@ -1022,6 +1022,42 @@ func caseFill(exe, dir string) error {
 	return nil
 }
 
+// caseMigrateDotDirs：issue #29 锚。
+// 点目录曾因 has_prefix(".") 一刀切被静默漏扫（.vscode/.github/.devcontainer
+// 类人写配置恰是迁移核心受众——随机 12 项目实测 650 张漏 42 张全在点目录）；
+// 修后只跳 .git/_build/node_modules/target 且**输出跳过声明**（静默漏扫即
+// 静默谎言）。
+func caseMigrateDotDirs(exe, dir string) error {
+	writeFile(dir, "a.json", "{\"a\":1}\n")
+	// 点目录照扫（人写配置）
+	if err := os.MkdirAll(filepath.Join(dir, ".vscode"), 0o755); err != nil {
+		return err
+	}
+	writeFile(dir, filepath.Join(".vscode", "settings.json"), "{\n  // comment\n  \"a\": 1,\n}\n")
+	// .git 跳过（版本库内部，无迁移语义）且有声明
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		return err
+	}
+	writeFile(dir, filepath.Join(".git", "config.json"), "{\"x\":1}\n")
+	rc, out, _, err := runExe(exe, dir, "migrate", ".")
+	if err != nil {
+		return err
+	}
+	if rc != 0 {
+		return fmt.Errorf("rc=%d\n%s", rc, out)
+	}
+	if !strings.Contains(string(out), ".vscode/settings.json") {
+		return fmt.Errorf(".vscode/settings.json 应被扫描（#29 未修？）\n%s", out)
+	}
+	if strings.Contains(string(out), ".git/config.json →") {
+		return fmt.Errorf(".git 不得被扫描\n%s", out)
+	}
+	if !strings.Contains(string(out), "skipped 1 dir(s): .git") {
+		return fmt.Errorf("跳过目录应显式声明\n%s", out)
+	}
+	return nil
+}
+
 // caseMigrateAstralBytes：issue #21 红→绿锚。
 // migrate 的 trim_trailing_nl 曾用 String::length()（UTF-16 码元数）索引
 // to_array()（码点数）——含星面字符（emoji U+1F680）时前者更大 →
@@ -1188,6 +1224,7 @@ func caseJsoncInputProfile(exe, dir string) error {
 var cases = []testCase{
 	{"J2003-emdash-stderr-bytes", caseEmdashStderr},
 	{"migrate-astral-bytes", caseMigrateAstralBytes},
+	{"migrate-dotdirs", caseMigrateDotDirs},
 	{"probe-samples-golden", caseProbeSamples},
 	{"build-stdout-deterministic", caseBuildDeterministic},
 	{"import-check-idempotent", caseImportCheckGate},

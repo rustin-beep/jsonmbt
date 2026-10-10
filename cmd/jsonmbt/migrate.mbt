@@ -12,12 +12,16 @@
 // 复现），前缀化发生时告警指向 --type-name-map。
 
 ///|
-/// 收集待迁 .json（跳过隐藏/_build/node_modules/target；跳过已有同名
-// .json.mbt 的——已迁移不重复报）
+/// 收集待迁 .json（跳过 .git/_build/node_modules/target；**其余点目录照扫**
+///（#29：.vscode/.github/.devcontainer 类人写配置曾是 migrate 的核心受众
+/// 却被 `has_prefix(".")` 一刀切静默漏扫——随机 12 项目实测 650 张漏 42
+/// 张全在点目录）；跳过已有同名 .json.mbt 的——已迁移不重复报）。
+/// skipped_dirs 累积被跳过的目录名（报告声明用——静默漏扫即静默谎言）
 fn collect_json_files(
   dir : String,
   prefix : String,
   out : Array[(String, String)], // (显示相对路径, 盘面路径)
+  skipped_dirs : Array[String],
 ) -> Unit {
   let entries = @fs.read_dir(dir) catch { _ => return }
   for e in entries {
@@ -27,12 +31,16 @@ fn collect_json_files(
       if !file_exists(dir + "/" + e[:e.length() - 5].to_owned() + ".json.mbt") {
         out.push((disp, full))
       }
-    } else if dir_exists(full) &&
-      !e.has_prefix(".") &&
-      e != "_build" &&
-      e != "node_modules" &&
-      e != "target" {
-      collect_json_files(full, disp + "/", out)
+    } else if dir_exists(full) {
+      // 点目录只跳 .git（版本库内部——无迁移语义）；_build/node_modules/
+      // target = 依赖与产物目录（非数据源）
+      if e == ".git" || e == "_build" || e == "node_modules" || e == "target" {
+        if !skipped_dirs.contains(disp) {
+          skipped_dirs.push(disp)
+        }
+      } else {
+        collect_json_files(full, disp + "/", out, skipped_dirs)
+      }
     }
   }
 }
@@ -106,7 +114,14 @@ fn run_migrate(root_arg : String, write : Bool, jsonc? : Bool = true) -> Int {
   }
   print_out("jsonmbt migrate \{root_arg}\{if write { " --write" } else { "" }}")
   let files : Array[(String, String)] = []
-  collect_json_files(root_arg, "", files)
+  let skipped_dirs : Array[String] = []
+  collect_json_files(root_arg, "", files, skipped_dirs)
+  // #29：跳过目录显式声明（静默漏扫即静默谎言——.git/_build/node_modules/target）
+  if skipped_dirs.length() > 0 {
+    print_out(
+      "skipped \{skipped_dirs.length()} dir(s): \{skipped_dirs.join(", ")}",
+    )
+  }
   if files.length() == 0 {
     print_out(
       "no .json found under '\{root_arg}' (files with an existing .json.mbt twin are skipped)",

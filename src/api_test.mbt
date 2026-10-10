@@ -244,3 +244,15 @@ test "#25 : 冗余圆括号包裹剥除（Group::Paren——moon fmt 产物可�
     content="[{\"case\":\"A\",\"value\":\"plain\"},{\"case\":\"A\",\"value\":\"double\"},{\"case\":\"A\",\"value\":\" 多行\"},{\"case\":\"A\",\"value\":\"triple\"}]",
   )
 }
+
+///|
+test "#27 : Map 键往返反转义——解码值语义（曾静默双层转义）" {
+  // 键含 \ " 与转义序列（jest transform 正则键形态）：import 产物键正确
+  // 转义，build 回来曾直拼源码原文再转义 = 双层（静默数据改写，migrate
+  // DIFF 哨兵首次在第三方真实数据抓到——nestjs sample/*/jest.json）。
+  // 修后 l0_map 键走 unescape（与字段值路径同款），往返逐字节回源
+  let json = "{\"m\":{\"a\u{5c}\u{5c}b\":1,\"c\u{5c}\"d\":2,\"e\u{5c}nf\":3}}"
+  let out = @src.import_source(json, path="m.json", stem="m").content
+  let built = @src.build_source(out, path="m.json.mbt", expected_name="m")
+  inspect(built, content=json)
+}

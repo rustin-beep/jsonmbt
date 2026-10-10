@@ -1215,3 +1215,26 @@ test "#26 : 含换行字符串产 #| 多行——教师循环形态保真" {
   let cr = do_import("{\"k\":\"a\u{5c}r\u{5c}nb\"}")
   inspect(cr.contains("\"a\u{5c}r\u{5c}nb\""), content="true")
 }
+
+///|
+test "#28 : is_legal_label 对齐 moon 词法区间表（表外字母不误收）" {
+  // 表外（moon 拒、曾误判合法直出非法 label → J0002 generator bug）：
+  // π(03C0)/α(03B1)/А(0400)/א(05D0)/अ(0905)/ก(0E01)/组合符(0301)/
+  // NBSP(00A0 空隙)/全角空格(3000 空隙)/全角０(FF10)/℘(2118)——落 Map
+  // 逃生门（is_sanitizable=false：π_ 也非法）
+  let out = @src.import_source(
+    "{\"locals\":{\"foo\":\"x\",\"π\":\"y\"}}",
+    path="locals.tf.json",
+    stem="locals",
+  )
+  inspect(out.content.contains("Map[String,"), content="true")
+  // 表内（moon 收）：é(00E9)/°(00B0)/×(00D7)/µ(00B5)/Ā(0100)/ª(00AA)/
+  // ⁰(2070)/中(4E2D)/あ(3042)/가(AC00)/𠀀(20000)/😀(1F600)——合法 label
+  let zh = do_import("{\"中\":1}")
+  inspect(zh.contains("中 : Int"), content="true")
+  let emoji = do_import("{\"😀\":1}")
+  inspect(emoji.contains("😀 : Int"), content="true")
+  // ASCII 对照：数字开头键走既有 Map 逃生门（非 #28 变更面——回归确认）
+  let d = do_import("{\"1abc\":1}")
+  inspect(d.contains("Map[String,"), content="true")
+}

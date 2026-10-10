@@ -34,24 +34,72 @@ fn is_legal_label(name : String) -> Bool {
   }
   let chars = name.to_array()
   let first = chars[0]
-  let first_ok = (first >= 'a' && first <= 'z') ||
-    first == '_' ||
-    first.to_int() >= 0x80
-  if !first_ok {
+  if !lident_start_ok(first) {
     return false
   }
   for i = 1; i < chars.length(); i = i + 1 {
-    let c = chars[i]
-    let ok = (c >= 'a' && c <= 'z') ||
-      (c >= 'A' && c <= 'Z') ||
-      (c >= '0' && c <= '9') ||
-      c == '_' ||
-      c.to_int() >= 0x80
-    if !ok {
+    if !ident_continue_ok(chars[i]) {
       return false
     }
   }
   true
+}
+
+///|
+/// moon 词法标识符区间表（lexer/regex.mbt 的 RE_LIDENT_START——#28：
+/// 曾用「码点 ≥ 0x80 一律合法」近似，π(03C0)/А(0400)/א(05D0) 等**表外**
+/// 字母被误判合法 → 直出非法 label 触发保险丝、报成 generator bug；
+/// 修后表外键自动落入 Map 逃生门/保留字改名/J4011 既有分派。表内代表：
+/// é(00E9) 中(4E2D) あ(3042) 가(AC00) 😀(1F600)；表外代表：π NBSP(U+3000
+/// 空隙) 全角０(FF10)。勘误旧认知：「非 ASCII 一律合法」是过度概括）
+let ident_ranges : Array[(Int, Int)] = [
+  (0x5F, 0x5F), // _
+  (0x61, 0x7A), // a-z
+  (0xA1, 0xAC),
+  (0xAE, 0x2AF),
+  (0x1100, 0x11FF),
+  (0x1E00, 0x1EFF),
+  (0x2070, 0x209F),
+  (0x2150, 0x218F),
+  (0x2E80, 0x2EFF),
+  (0x2FF0, 0x2FFF),
+  (0x3001, 0x30FF),
+  (0x31C0, 0x9FFF),
+  (0xAC00, 0xD7FF),
+  (0xF900, 0xFAFF),
+  (0xFE00, 0xFE0F),
+  (0xFE30, 0xFE4F),
+  (0x1F000, 0x1FBFF),
+  (0x20000, 0x2A6DF),
+  (0x2A700, 0x2EBEF),
+  (0x2F800, 0x2FA1F),
+  (0x30000, 0x323AF),
+  (0xE0100, 0xE01EF),
+]
+
+///|
+fn in_ident_ranges(cp : Int) -> Bool {
+  for r in ident_ranges {
+    if cp >= r.0 && cp <= r.1 {
+      return true
+    }
+  }
+  false
+}
+
+///|
+/// 首字符（RE_LIDENT_START）：_ / a-z / 区间表（无 0-9、无 A-Z）
+fn lident_start_ok(c : Char) -> Bool {
+  in_ident_ranges(c.to_int())
+}
+
+///|
+/// 续字符（RE_IDENT_CONTINUE = 区间表 + 0-9 + A-Z）
+fn ident_continue_ok(c : Char) -> Bool {
+  let cp = c.to_int()
+  (cp >= 0x30 && cp <= 0x39) ||
+  (cp >= 0x41 && cp <= 0x5A) ||
+  in_ident_ranges(cp)
 }
 
 ///|

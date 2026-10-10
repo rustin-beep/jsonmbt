@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Fixed（issue #27/#28/#29：随机 12 项目实测批三 bug——静默改写/词法对齐/漏扫）
+
+- **#27 Map 键不反转义（静默数据改写，P1 级）**：`l0_map` 键曾直拼源码原文——含 `\` `"` 转义的键（jest transform 正则键形态）降级多转义一层、值被静默改写且 check 过；按处方一行修（`unescape_string(raw, el.key_loc)`——与字段值路径同款），重复键判定随之按解码值（D-11）。**migrate DIFF 哨兵首次在第三方真实数据抓到真缺陷**（nestjs sample/*/jest.json，4/608 张）；验收：紧凑原源往返逐字节回源、migrate 判 BYTE-EQ
+- **#28 is_legal_label 对齐 moon 词法区间表**：`>= 0x80` 近似曾把 π/А/א/अ/ก 等表外字母误判合法 → 直出非法 label 触发保险丝报成 J0002 generator bug；替换为 lexer 硬编码表（RE_LIDENT_START/RE_IDENT_CONTINUE，22 区间三函数）。19 码点对账全锚（π → Map 逃生门；é/中/😀 表内合法；异值键样本从 J0002 变 J4011 可行动诊断）；**旧认知勘误**：「非 ASCII 一律合法」是过度概括
+- **#29 migrate 点目录漏扫**：`has_prefix(".")` 一刀切静默漏扫 .vscode/.github/.devcontainer 类人写配置（实测 650 张漏 42 张全在点目录）——改**只跳 .git/_build/node_modules/target** + 跳过目录显式声明输出（`skipped N dir(s): …`）；层 2 新锚 `migrate-dotdirs`
+- 门禁：层 1 **120/120**（+2 锚）、层 2 **33/33**（+1 用例）、三张 issue 原复现终态手验；**#30（pretty 数组布局）挂分析评论待裁定**（三案评估：1+2 组合建议）
+
 ### Added（issue #26：emitter 对含 `\n` 字符串产 `#|` 多行——教师循环形态保真，方案 1）
 
 - **动机**：`#|` 手写真源（43 条长中文）→ build 降级 → 改值 → `--fill` 回写——全部条目（含未变的）磨损成单行转义长串，写作面单向退化；`#|` 多行是手写面核心可读性卖点，回写必须保形
