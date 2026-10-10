@@ -252,7 +252,7 @@ const EAT = [
   ['标量 + 嵌套对象', '基本类型全收，嵌套 → 嵌套 struct', '{"id": 1, "name": "demo", "cfg": {"debug": true, "ratio": 0.5}}'],
   ['数组 + 嵌套数组', '同构数组 → Array[T]', '{"tags": ["api", "web"], "matrix": [[1, 2], [3, 4]]}'],
   ['null → Option（数组聚合）', '非 null 样本给线索，null 字段推 T?（单样本全 null 会 J4003）', '{"users": [{"nickname": null, "id": 1}, {"nickname": "x", "id": 2}]}'],
-  ['JSONC 注释剥离', '// 注释剥丢弃明示；尾逗号是 .json.mbt 侧优势（JSON 输入侧不吃尾逗号）', '{\n  // 用户配置\n  "port": 8080,\n  "hosts": ["a", "b"]\n}'],
+  ['JSONC 注释 + 尾逗号', '默认 jsonc 档：// 注释、/* 块注释 */、尾逗号、文件首 BOM 全收（等长空格消解，诊断行列不漂移）；--input json 退回裸 RFC 8259', '{\n  // 用户配置\n  "port": 8080, /* 块注释 */\n  "hosts": ["a", "b",],\n}'],
   ['非常规键 → Map 逃生门', '非法 label 键 + 同值类型 → Map[String, V]', '{"Content-Type": "application/json", "x_custom": "v"}'],
   ['tagged-enum 识别提示', '{Tag: ...} 形态给 J4030 提示建议手写 enum（仍按原样导入）', '{"actions": [{"Void": true}, {"Copy": true}]}'],
   ['Int64 精确大数', '超 Int 范围上浮 Int64，repr 保真——JS number 在 2⁵³ 后丢精度，这里 9007199254740993 原样', '{"id": 9007199254740993}'],
@@ -275,7 +275,8 @@ const REJECT = [
 const MBT = [
   ['enum 键集建模（D-5/D-12）', '带 payload 变体降级 = tag 对象展开（payload 进顶层 + "case" 键）；无参变体 = 变体名字符串——JSON 表达不了的异构数组这样建', 'struct Pt {\n  x : Int\n  y : Int\n}\nenum Shape {\n  Dot(Pt)\n  Unit\n}\npub let shapes : Array[Shape] = [Dot(Pt::{ x: 1, y: 2 }), Unit]'],
   ['Option：None ↔ null', '后缀糖 T? 即 Option[T]；None 降级 null（无损直译），Some("x") 降级 "x"', 'struct S {\n  nick : String?\n}\npub let s : S = S::{ nick: Some("x") }'],
-  ['#| 多行字符串', '长中文文本不拼 \\n，降级行净内容以 \\n 连接', 'pub let doc : String = #|\n#| 第一行\n#| 第二行'],
+  ['#| 多行字符串', '长中文文本不拼 \\n，降级行净内容以 \\n 连接；import/--fill 对含换行的值产回 #| 多行（教师循环回写不磨损手写形态）', 'pub let doc : String = #|\n#| 第一行\n#| 第二行'],
+  ['冗余圆括号剥除', 'A(("x")) 是合法 MoonBit（moon fmt 规范产物形态）——值位圆括号剥除后照常收，与 A("x") 值等价；花括号块仍拒', 'enum A {\n  Tag(String)\n}\npub let t : Array[A] = [\n  Tag(("fmt 产物形态")),\n]'],
   ['注释与尾逗号丢弃', '.json.mbt 侧天然合法；降级为纯 JSON 时注释消失（写「为什么」不进产物）', 'pub let s = {\n  "a": 1, // 会消失\n}'],
   ['嵌套 enum payload', 'payload 形参也可以是 enum 名——Named(Col) 收字面量 Named(X)，降级 {"case":"Named","value":"X"}', 'enum Col {\n  X\n}\nenum Field {\n  Named(Col)\n}\npub let f : Field = Named(X)'],
   ['数字降级契约', '整数族解析值归一（-0 → 0、0x10 → 16）；Double 源拼写透传（1.50 原样——避免精度伪影）', 'struct N {\n  a : Int\n  b : Double\n  c : Int\n}\npub let n : N = N::{\n  a: -0,\n  b: 1.50,\n  c: 0x10,\n}'],

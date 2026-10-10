@@ -1195,3 +1195,23 @@ test "审 P1-c : fill 标量 payload 缺 value 键 fail loud（曾 [0] 越界 pa
   inspect(d.contains("[J3006]"), content="true")
   inspect(d.contains("no 'value' key"), content="true")
 }
+
+///|
+test "#26 : 含换行字符串产 #| 多行——教师循环形态保真" {
+  // 手写 #| → build 降级 → import/--fill 回写：emitter 对含 \n 的字符串
+  // 产 #| 多行（值位括号包裹 + 无前导空格规范形），回写不再磨损成单行
+  // 转义长串；单行值保持转义形态。产物 fmt 幂等（探针 2026-10-10：值位
+  // 括号包裹 × fmt 归一缩进 × 二次 fmt 不动）
+  // JSON 输入的 \n 转义用 \u{5c}n 构造（moon 源码层的双反斜杠歧义先例，
+  // 见 D-9 三形态锚）；产物期望里的 \n 是真换行（moon \n 转义直书）
+  let json_input = "{\"items\":[\"第一行\u{5c}n第二行\u{5c}n\",\"单行\"]}"
+  let out = do_import(json_input)
+  inspect(out.contains("(\n#|第一行\n#|第二行\n#|\n)"), content="true")
+  inspect(out.contains("\"单行\""), content="true")
+  // 回吃往返无损（#| 行净内容以 \n 连接——空行 = 裸标记）
+  let built = @src.build_source(out, path="t.json.mbt", expected_name="t")
+  inspect(built, content="{\"items\":[\"第一行\u{5c}n第二行\u{5c}n\",\"单行\"]}")
+  // \r 不走多行（CRLF 源的行尾 \r 入值语义在读取层有歧面——转义保真）
+  let cr = do_import("{\"k\":\"a\u{5c}r\u{5c}nb\"}")
+  inspect(cr.contains("\"a\u{5c}r\u{5c}nb\""), content="true")
+}

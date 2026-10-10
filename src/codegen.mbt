@@ -30,6 +30,29 @@ fn ensure_double_syntax(repr : String) -> String {
 }
 
 ///|
+/// 字符串值渲染（#26 教师循环形态保真）：含 \n 的长文案产 `#|` 多行
+/// （值位括号包裹 + 无前导空格规范形——moon 语义 `#| x` 空格入值，不产
+/// 即不引入；回写不再把手写多行形态磨损成单行转义长串）；单行值保持
+/// 转义形态。fmt 幂等（探针 2026-10-10：构造器/字段/Map 值/数组/Some
+/// 位全合法，fmt 归一为值位括号 + 缩进 #|，二次 fmt 不动）。含 \r 的
+/// 值不走多行——CRLF 行尾 \r 入值的语义在读取层有歧面，转义保真
+fn render_string_value(s : String) -> String {
+  if s.contains("\n") && !s.contains("\r") {
+    let buf = StringBuilder()
+    buf.write_string("(\n")
+    for line in s.split("\n") {
+      buf.write_string("#|")
+      buf.write_string(line.to_owned())
+      buf.write_string("\n")
+    }
+    buf.write_string(")")
+    buf.to_string()
+  } else {
+    moonbit_escape(s)
+  }
+}
+
+///|
 /// 解码值 → MoonBit 字面量转义（unescape 的逆向；\u{XX} 小写 hex 惯例）
 fn moonbit_escape(s : String) -> String {
   let buf = StringBuilder()
@@ -257,7 +280,7 @@ fn render_value(
             path="",
           )
       }
-    (String(s), _) => moonbit_escape(s)
+    (String(s), _) => render_string_value(s)
     (Array(elems), t) => {
       let elem_ty : JType? = match t {
         Some(JTArray(et)) => Some(et)

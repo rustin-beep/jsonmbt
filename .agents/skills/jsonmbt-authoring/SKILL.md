@@ -42,7 +42,7 @@ rc 语义：`0` ok / `1` 输入错 / `2` 漂移（--check）/ `4` 用法错。CI
 3. **键集不齐的数组用带参 enum**（D-5）：每种键集一个 struct，`enum Case { A(Ax); B(Bx) }`，字面量 `A(Ax::{ field: value })`。降级投影 = tag 对象展开（payload 进顶层 + `"case"` tag 键）；**payload 字段禁止叫 `case`**（J3008 显式拒）；**payload 形参也可以是 enum 名**（`enum Field { Named(Col) }` + `Named(X)`——标量 payload 走 `{"case":…,"value":…}` 形态）；已知面：struct payload 含 `value` 字段展平后与标量 payload 的 `value` 键同形（J3008 只防 `case` 不防 `value`——实际可由 case 值区分，登记不修）；
 3a. **键域强校验（有限键集「拼错红」）→ 带参枚举数组**（#24）：`enum AlgoSuggestion { BubbleSort(String); … }` + `[BubbleSort("文案"), …]`——拼错变体名 moon check 写时红；降级 `[{"case":"BubbleSort","value":"…"}]`，下游按 case 值机械投影键名。**别用 `Map[AlgoE, String]`**：Map 字面量键位不接受裸构造器——moon 本尊即 `[4014]` Constr Type Mismatch（语言层边界非 jsonmbt 限制；Vitro 教学资产批两轮探针实录）；
 4. **import 不自动转缺键异构**（J4010/J4011 fail loud）——拼错字段名与真可选无法区分，自动推断会把数据错误静默类型化。遇拒看报错里的字段集差异与分布计数（**按容器路径分组**：`at $.entries[]: N distinct key sets…`——顶层不再与数组元素混计；计数是**下界**，扫描在首个冲突合并处短路），手工建模 enum 或补齐键；
-5. **长文本用 `#|` 多行字符串**（D-12）——中文长描述不用拼 `\n`；**`#|` 后的首个空格属于值**（moon 原生语义：`#| 冒泡` 值 = `" 冒泡"`——排版习惯想加空格观感时，`#|` 后直接写内容；「全部 `#|` 行统一前导空格」的形态 doctor 会给 note 提示，#24）；
+5. **长文本用 `#|` 多行字符串**（D-12）——中文长描述不用拼 `\n`；**`#|` 后的首个空格属于值**（moon 原生语义：`#| 冒泡` 值 = `" 冒泡"`——排版习惯想加空格观感时，`#|` 后直接写内容；「全部 `#|` 行统一前导空格」的形态 doctor 会给 note 提示，#24）；**import/--fill 对含 `\n` 的值产回 `#|` 多行**（值位括号包裹、无前导空格规范形——教师循环 build→改值→fill 回写不磨损手写多行形态，#26；含 `\r` 的值例外走转义单行）；
 6. **大数 >Int64 拒收**（J4020）：降级要求无损——要保留超长数字请以 String 字段承载；
 7. **全 null 列无法推断类型**（J4003）：至少给一个非 null 样本，或手工把字段建成 `Option[T]`；
 8. **注释与尾逗号天然合法**——这是相对 JSON 的核心书写优势，用真注释写「这字段为什么存在」；输入侧对偶：`import`/`migrate` 默认 jsonc 档（注释/尾逗号/BOM 消解直进，#22/D-9——与 `.json.mbt` 语法侧的尾逗号是两件事）。
@@ -75,12 +75,15 @@ jsonmbt import x.json --fill x.json.mbt
 
 消歧能力：空容器直吃声明元素类型；键集漂移按声明 enum 选变体（`case` tag 或键集精确匹配双形态——**fill 能吃自身降级产物**）；数据与声明不同步 fail loud（无匹配变体 J3004 / 多余键 J3005 / 缺键 J3006）。`--fill` 与 `--type-name-map`/`--strict` 互斥（J0001）。
 
+**教师循环形态保真（#26）**：`#|` 手写真源 → build 降级 JSON → 改值 → `--fill` 回写——含 `\n` 的值产回 `#|` 多行（值位括号包裹、无前导空格），未改条目形态照旧——写作面不再单向磨损；教师循环 = build ⇄ fill 的双向桥稳态用法。
+
 ## 机器写回（emitter）纪律
 
 1. **程序生成别走 import**——import 是人的迁移工具；直接产 .mbt 文本 + `jsonmbt build` 验证；
 2. **Map 键序由 .mbt 文本序决定**：从 Go map range 直接输出会翻车（遍历序随机）——必须原文顺序抽取或显式排序，否则确定性破功；
 3. **round-trip 是链路语义闸，必跑——但「round-trip 绿 ≠ 数据语义正确」**：它防的是**链路引入的漂移**（emitter 装错变体、编解码不对称、归一化丢信息——build 再生对拍即红）；**不防**：①手写源头错（靠 freeze diff 人审）②值超域（99999 稳定往返 99999，绿——需消费侧 guard 或值域校验）。另一个第二用途：emitter 形态版本升级时，round-trip 可证「纯形态重构、语义零变化」；
-4. **fmt-stable**：import 用 `--fmt` 旗标（内部 spawn `moon fmt <单文件>`，无 workspace 副作用）；程序 emitter 同款——落盘后对产物单文件跑 `moon fmt`，不要对整个目录跑（会重排无关源文件）。**`--fmt` 前提 = 产物目录向上可达 moon workspace 根**（moon fmt 单文件只认 workspace 覆盖，盲区文件 moon 自报 `not in a Moon project` 退非零）；**跨项目 fmt 唯一可靠形态 = `cd <目标项目> && moon fmt`**——`moon fmt <path>` 把 path 当「当前项目内的包过滤 pattern」，项目外/非包路径**静默跳过且 rc=0**（陷阱 #45）；**fmt 失败 = 产物保留未 fmt 形态 + rc=4**（半成功态：脚本按 rc 判红，产物留现场供排查，别删也别信其形态）。
+4. **含 `\n` 的长文案产 `#|` 多行**（对齐 jsonmbt 自家 emitter 规范形，#26）：值位 `(\n#|行\n…)` 括号包裹、`#|` 无前导空格——moon fmt 归一为缩进形后幂等；单行值保持转义形态、含 `\r` 的值走转义单行；
+5. **fmt-stable**：import 用 `--fmt` 旗标（内部 spawn `moon fmt <单文件>`，无 workspace 副作用）；程序 emitter 同款——落盘后对产物单文件跑 `moon fmt`，不要对整个目录跑（会重排无关源文件）。**`--fmt` 前提 = 产物目录向上可达 moon workspace 根**（moon fmt 单文件只认 workspace 覆盖，盲区文件 moon 自报 `not in a Moon project` 退非零）；**跨项目 fmt 唯一可靠形态 = `cd <目标项目> && moon fmt`**——`moon fmt <path>` 把 path 当「当前项目内的包过滤 pattern」，项目外/非包路径**静默跳过且 rc=0**（陷阱 #45）；**fmt 失败 = 产物保留未 fmt 形态 + rc=4**（半成功态：脚本按 rc 判红，产物留现场供排查，别删也别信其形态）。
 
 ## Agent 协作纪律（下游仓收录时抄这段）
 
