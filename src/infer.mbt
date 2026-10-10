@@ -805,6 +805,14 @@ fn lub(
       }
     (JTMap(_, v1), JTMap(_, v2)) => JTMap(JTString, lub(ctx, v1, v2, in_array~))
     (JTNullLike, t) | (t, JTNullLike) => t // null 由上层聚合 Option
+    // 审 P1-a：#20 元素位自聚合后 JTOption 首次流入 lub（旧实现靠
+    // (JTNullLike,t) 静默吞掉的空洞被暴露——Int? vs Int? 落 hetero）。
+    // Option 外壳合流：内层递归 lub（同型保型、Int/Int64 上浮等语义
+    // 不变）；null 由上方 NullLike 臂先行兜底（不收紧内层）
+    (JTOption(x), JTOption(y)) =>
+      JTOption(lub(ctx, x, y, in_array~, at_map~))
+    (JTOption(x), t) | (t, JTOption(x)) =>
+      JTOption(lub(ctx, x, t, in_array~, at_map~))
     _ => raise hetero_diag(ctx, in_array, "\{a.show()} vs \{b.show()}", at_map~)
   }
 }

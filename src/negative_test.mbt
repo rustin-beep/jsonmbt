@@ -330,3 +330,33 @@ test "#25 : 花括号块 payload 拒（Group::Brace——副作用序列非字�
   }
   inspect(d.contains("braced block is outside the L0"), content="true")
 }
+
+///|
+test "审 P1-b : 花括号转义代理区拒收（与定长 \\uXXXX 分支同款 J3003）" {
+  // moon 本尊对 "\u{d800}" 报 [4064]（审阅实测）——jsonmbt 不比 moon 严；
+  // 旧实现只查 >0x10FFFF 上限，代理点 unsafe_to_char 后降级链 panic
+  //（check 放行 build 崩——绕过 D-8 ① 校验先行）。定长分支 #16 已有
+  // 同款检查，花括号路径漏网（同族逐处对齐）
+  let d = try {
+    let _ = @src.build_source(
+      "pub let v = \"\\u{d800}\"",
+      path="v.json.mbt",
+      expected_name="v",
+    )
+    "SUCCEEDED"
+  } catch {
+    e => if e is Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d.contains("[J3003]"), content="true")
+  // 合法上限（0x10FFFF 非代理）照常收——降级为裸 UTF-8（非 ASCII 不转义）；
+  // 码点断言：`"` + U+10FFFF(=1114111) + `"`（inspect 字面串在该字符上
+  // 有显示同形字节异的差异噪音，码点级断言更硬）
+  let ok = @src.build_source(
+    "pub let v = \"\\u{10FFFF}\"",
+    path="v.json.mbt",
+    expected_name="v",
+  )
+  let cps = ok.to_array()
+  inspect(cps.length() >= 3, content="true")
+  inspect(cps[1].to_int(), content="1114111")
+}

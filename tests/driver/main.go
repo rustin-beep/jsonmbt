@@ -1157,6 +1157,11 @@ func caseJsoncInputProfile(exe, dir string) error {
 	if err != nil || rc != 4 || !bytes.Contains(stderr, []byte("--input applies to import/migrate only")) {
 		return fmt.Errorf("build --input 应 rc4 拒（rc=%d stderr=%q）", rc, stderr)
 	}
+	// --strict 误用（审 P3：空容器推断档对 build/check 无意义，曾静默忽略）
+	rc, _, stderr, err = runExe(exe, dir, "build", "b.json.mbt", "--strict")
+	if err != nil || rc != 4 || !bytes.Contains(stderr, []byte("--strict applies to import only")) {
+		return fmt.Errorf("build --strict 应 rc4 拒（rc=%d stderr=%q）", rc, stderr)
+	}
 	// json 档：尾逗号拒
 	rc, _, stderr, err = runExe(exe, dir, "import", "tc.json", "--input", "json", "-o", "-")
 	if err != nil || rc != 1 || !bytes.Contains(stderr, []byte("[J1002]")) {

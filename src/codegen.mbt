@@ -430,9 +430,23 @@ fn render_variant_payload(
       }
       "\{v}(\{render_value(table, atab, Json::object(inner), pty, enums~, strict_keys=true)})"
     }
-    Some(other) =>
-      // 标量 payload（case/value 形态）
+    Some(other) => {
+      // 审 P1-c：标量 payload 的源对象剥 tag 后无余键（缺 value 键）——
+      // 数据与声明不同步，fail loud（曾 payload_keys[0] 越界 panic 且
+      // 绕过校验先行——D-8 ①）
+      if payload_keys.length() == 0 {
+        raise Diag(
+          code=JMissingField,
+          loc=dummy_loc(),
+          message="variant '\{v}' has a scalar payload but the source JSON carries no 'value' key",
+          help=Some(
+            "fill only rewrites the value body; add the payload key to the JSON or use a payload-less variant",
+          ),
+          path="",
+        )
+      }
       "\{v}(\{render_value(table, atab, o.get(payload_keys[0]).unwrap(), Some(strip_option_shallow(other)), enums~, strict_keys=true)})"
+    }
     None => "\{v}"
   }
 }

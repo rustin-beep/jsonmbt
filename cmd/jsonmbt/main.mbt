@@ -550,6 +550,7 @@ fn main_rc() -> Int {
   let mut do_indent : Int? = None // --pretty 缩进宽度（#6-1）；None = 未给（提示判据）
   let mut type_map_path : String? = None // import --type-name-map <file>（#6-4）
   let mut do_strict = false // import --strict（#14-2a）：空容器严格档（如旧 J4001/J4002 拒）
+  let mut strict_given = false // --strict 显式出现（审 P3：build/check 误用拒绝——同 --input 同批纪律）
   let mut do_jsonc = true // --input（#22/D-9）：jsonc 档（默认）——false = 裸 RFC 8259
   let mut input_given = false // --input 显式出现（非 import verb 误用判据——防静默无效参数）
   let mut fill_path : String? = None // import --fill <file>（#14-2b）：按已声明类型重算值体
@@ -597,6 +598,7 @@ fn main_rc() -> Int {
       i = i + 2
     } else if a == "--strict" {
       do_strict = true
+      strict_given = true // 审 P3：非 import verb 误用判据（防静默无效参数）
       i = i + 1
     } else if a == "--input" {
       // D-9（#22）：输入 profile 旗标——jsonc（默认）= 注释/尾逗号/BOM
@@ -706,6 +708,14 @@ fn main_rc() -> Int {
   }
   if fill_path is Some(_) {
     return jdiag_exit(@src.JUsage, "--fill applies to import only")
+  }
+  if strict_given {
+    // 审 P3：--strict 是空容器推断档（#14-2a）——build/check 无推断面，
+    // 曾静默忽略（与同批 --input 自立的 fail-loud 纪律相悖）
+    return jdiag_exit(
+      @src.JUsage,
+      "--strict applies to import only (it tunes shape inference, which build/check never runs)",
+    )
   }
   if input_given {
     return jdiag_exit(

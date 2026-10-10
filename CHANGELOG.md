@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Fixed（深度审阅处置 2026-10-10：P1×3 修 + P3×2 修——审阅探针/突变注入双验）
+
+- **P1-a `lub` 缺 `JTOption` 臂**：`#20` 元素位自聚合后 JTOption 首次流入 lub，旧匹配表落 hetero——`[{"a":[null,1]},{"a":[null,2]}]` 报 `Int? vs Int?` **同型误拒**（旧实现靠 `(JTNullLike,t)` 静默吞掉的空洞被 #20 暴露）；补 Option 双向臂（内层递归 lub——同型保型/上浮语义不变，null 由 NullLike 臂先行兜底）；双样本锚 + 真异构仍拒负锚
+- **P1-b `unescape` 花括号路径缺代理检查**：`\u{d800}` 只查 >0x10FFFF 上限——代理点 `unsafe_to_char` 后降级链 panic 且 **check 放行 build 崩**（绕过 D-8 ① 校验先行）；moon 本尊 `[4064]` 拒（审阅实测）——jsonmbt 不比 moon 严；花括号分支补定长 `\uXXXX` 同款代理区检查 → J3003（#16 同族逐处对齐）；锚含 0x10FFFF 合法收码点断言
+- **P1-c `--fill` 标量 payload 空键 panic**：`{"case":"Scalar"}`（无 value 键）对声明 `Scalar(Int)` 在 `render_variant_payload` 取 `payload_keys[0]` 越界 panic；改 J3006 fail loud（fill 只重写值体——数据与声明不同步不吞错）；#14-2b 新代码的可达性空洞
+- **P3 `--strict` 误用守卫**：build/check 带 `--strict` 曾静默忽略（与同批 `--input` 自立的 fail-loud 纪律相悖）——补 JUsage（strict 是推断档，build/check 无推断面）；层 2 `jsonc-input-profile` 补断言
+- **P3（文档）CHANGELOG 增量链自洽**：#22 段 `+7` 勘误为净 +6（P2-6① 迁移是重写非新增——链条 104+2+6+2=114 对账）
+- 门禁：层 1 **117/117**（+3 锚）、层 2 **32/32**（双 exe）、四件终 exe 手验（P1-b check 侧先拒 = D-8 ① 恢复）
+
 ### Fixed（issue #25：L0 拒绝冗余圆括号包裹的字面量——moon fmt 规范产物可读）
 
 - **定性**：`A(("x"))` 是合法 MoonBit（fmt 幂等保留该形态——实测复核：payload 构造器位保留双括号、数组位收敛单层），值上严格等价 `A("x")`——拒绝即「合法 MoonBit 子集」承诺的非预期收窄（与 #16 转义宽集同族：jsonmbt 不比 moon 严），互操作 bug 级（真源进 fmt 跑的 workspace 即触发，Vitro #60 批一实录）
@@ -18,7 +27,7 @@
 - **落法 = 消解式**：`strip_jsonc` 从注释剥离器升级**输入归一化器**（唯一宽松层），尾逗号同一 pre-pass **等长空格消解**（诊断行列不漂移）；`jsonparse.mbt` 恒裸 RFC 8259——对拍基准不污染（parser 仅删两处 `(trailing comma is not JSON)` 括号注释：消解式下不可达，防误导）
 - **机制**：pending-comma 暂存（穿透空白**与注释**看有效字符才判定）+ last_sig guard（逗号前一非空白有效字符 ∈ `{ [ , :` 或文件首则不消解）+ BOM 仅 `pos==0`；埋雷实锤 guard 的真实价值 = 报错位正确性（禁用时报错从 U+002C 漂到 U+005D——「保位」锚先红）
 - **CLI `--input <json|jsonc>`**：默认 jsonc；json = 裸 RFC 8259（注释也拒）；import/fill/migrate 三入口同旗标；别值 J0001、非 import/migrate verb 误用拒绝；**不复用 `--strict`**（#14-2a 已占用）；库层 `import_source`/`fill_source` 新增 `jsonc? : Bool = true` 出口面参数（mbti 已同步）
-- **锚拆档（防线净增）**：P2-6① 原断言迁移至 json 档锚（永久保留）+ 默认档翻转为值等价锚；负锚五形态（开头/孤立/值缺失逗号）；BOM 锚（文件首消解 + 字符串内 U+FEFF 保留）；穿透注释锚；保位列位锚；层 1 **112/112**（+7：含 manual 摄取章新可执行锚）
+- **锚拆档（防线净增）**：P2-6① 原断言迁移至 json 档锚（永久保留——重写非新增）+ 默认档翻转为值等价锚；负锚五形态（开头/孤立/值缺失逗号）；BOM 锚（文件首消解 + 字符串内 U+FEFF 保留）；穿透注释锚；保位列位锚；层 1 **112/112**（净 +6 = 五新锚 + manual 摄取章可执行锚；审 P3 勘误：原记 +7 误将 P2-6① 重写作新增——增量链 104+2(#24)+6(#22)+2(#25)=114 自洽）
 - **层 2 第五件**：probe/samples 新样本对 `tsconfig_like`（.jsonc 三合一输入 + 人写语义命名 .json.mbt + golden .json）；caseProbeSamples 扩第二循环（.jsonc 输入 → import → build 与 golden 比 + `--input json` 同输入必拒）；新用例 `jsonc-input-profile`（旗标值域/误用/双档对拍）——层 2 **32/32**
 
 ### Added（issue #24：Vitro 教学资产批实战反馈——建模指引 + `#|` 空格语义 + doctor 排版 note）

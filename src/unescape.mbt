@@ -64,7 +64,15 @@ fn unescape_string(raw : String, loc : @basic.Location) -> String raise Diag {
                 None => raise malformed_string(raw, loc)
               }
             }
-            if !closed || digits == 0 || digits > 6 || acc > 0x10FFFFU {
+            // 审 P1-b：代理区（0xD800–0xDFFF）非字符，moon 本尊 [4064] 拒
+            // 收——定长 \uXXXX 分支同款检查（#16）此前在花括号路径漏网；
+            // 接受后 unsafe_to_char 产代理点、降级链 to_utf8_bytes panic
+            //（check 放行 build 崩 = 绕过 D-8 ① 校验先行）
+            if !closed ||
+              digits == 0 ||
+              digits > 6 ||
+              acc > 0x10FFFFU ||
+              (acc >= 0xD800U && acc <= 0xDFFFU) {
               raise malformed_string(raw, loc)
             }
             buf.write_char(acc.reinterpret_as_int().unsafe_to_char())

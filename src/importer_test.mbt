@@ -1154,3 +1154,44 @@ test "import : JSON 语法错报错码点用十六进制（#22 附带——十�
   inspect(d.contains("U+0040"), content="true")
 }
 
+
+///|
+test "审 P1-a : 多样本可选数组合流（lub 的 JTOption 臂）" {
+  // {"a":[null,1]} x {"a":[null,2]}：#20 元素位自聚合后 JTOption 流入 lub，
+  // 旧匹配表无 Option 臂落 hetero（Int? vs Int? 同型误拒）；Option 外壳
+  // 合流 + 内层递归——同型/混型都归 Array[Int?]
+  let out = do_import("[{\"a\":[null,1]},{\"a\":[null,2]}]")
+  inspect(out.contains("a : Array[Int?]"), content="true")
+  let out2 = do_import("[{\"a\":[1]},{\"a\":[null,2]}]")
+  inspect(out2.contains("a : Array[Int?]"), content="true")
+  // 真异构不合流（Option 臂不吞异型——内层递归仍走 hetero 拒）
+  let d = try {
+    let _ = do_import("[{\"a\":[1]},{\"a\":[\"x\"]}]")
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d.contains("[J4012]"), content="true")
+}
+
+///|
+test "审 P1-c : fill 标量 payload 缺 value 键 fail loud（曾 [0] 越界 panic）" {
+  // {"case":"Scalar"}（无 value 键）对声明 Scalar(Int)——数据与声明不同步
+  // 曾在 render_variant_payload 取 payload_keys[0] panic 且绕过校验先行
+  //（D-8 ①）；修后 J3006 指路
+  let existing = "enum Payload {\n  Scalar(Int)\n  Obj(Meta)\n}\nstruct Meta {\n  k : Int\n}\npub let x : Payload = Scalar(1)\n"
+  let d = try {
+    let _ = @src.fill_source(
+      "{\"case\":\"Scalar\"}",
+      existing,
+      path="x.json",
+      fill_path="x.json.mbt",
+      stem="x",
+    )
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d.contains("[J3006]"), content="true")
+  inspect(d.contains("no 'value' key"), content="true")
+}
