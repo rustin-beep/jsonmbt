@@ -1644,3 +1644,28 @@ test "#39 : 祖先链同键集不再误合流——深度进签名（D-15）" {
     content="true",
   ) // 同构数组合流保持
 }
+
+///|
+test "#48 : fill 值面冲突透传内层码——rc1 输入错非 generator bug" {
+  // 源 JSON 与手写类型头冲突（"str" 填进 k : Int32）——fill 忠实按类型头
+  // 渲染值体、保险丝拦下：错在输入不在生成器。曾一律 J0002 rc=4 +
+  // 「internal / please report」误导用户提 issue（红面 = issue #48 实测）
+  let existing = "///|\npub struct A {\n  k : Int32\n}\n\n///|\npub let a : A = A::{ k: 1 }\n"
+  let d = try {
+    let _ = @src.fill_source(
+      "{\"k\": \"str\"}",
+      existing,
+      path="s.json",
+      fill_path="s.json.mbt",
+    )
+    "FILL-SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d.contains("[J3004]"), content="true") // 内层码透传（rc 1 输入错）
+  inspect(
+    d.contains("fill: source JSON conflicts with the declared type header"),
+    content="true",
+  )
+  inspect(d.contains("generator bug"), content="false")
+}

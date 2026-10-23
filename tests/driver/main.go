@@ -1454,6 +1454,56 @@ func caseMigrateAstralBytes(exe, dir string) error {
 	return nil
 }
 
+// caseProductHeaderPortable：#49 红→绿锚。产物头曾记调用时源路径原形
+// （绝对/相对随调用方式变）——跨机不可复现、CI 与本地形态不一致时
+// import --check 持续假漂移（真相源永远绿不了）。修复 = 头只记
+// basename。锚 = 同一 JSON 在两个目录、以相对/绝对两种调用形态 import，
+// 四份产物逐字节相同（B 方案可行性由 issue 实测背书：相对形态跨目录
+// 本就逐字节相同）。
+func caseProductHeaderPortable(exe, dir string) error {
+	const j = `{"a":1,"b":"x"}`
+	d1 := filepath.Join(dir, "d1")
+	d2 := filepath.Join(dir, "d2")
+	for _, d := range []string{d1, d2} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return err
+		}
+		writeFile(d, "x.json", j)
+	}
+	// 相对形态（cwd=d1 / d2）
+	if rc, _, _, err := runExe(exe, d1, "import", "x.json"); err != nil || rc != 0 {
+		return fmt.Errorf("d1 rel import rc=%d err=%v", rc, err)
+	}
+	if rc, _, _, err := runExe(exe, d2, "import", "x.json"); err != nil || rc != 0 {
+		return fmt.Errorf("d2 rel import rc=%d err=%v", rc, err)
+	}
+	// 绝对形态（cwd=dir，传绝对路径）
+	abs1, _ := filepath.Abs(filepath.Join(d1, "x.json"))
+	abs2, _ := filepath.Abs(filepath.Join(d2, "x.json"))
+	if rc, _, stderr, err := runExe(exe, dir, "import", abs1, "-o", filepath.Join(d1, "abs.json.mbt")); err != nil || rc != 0 {
+		return fmt.Errorf("d1 abs import rc=%d err=%v stderr=%q", rc, err, stderr)
+	}
+	if rc, _, stderr, err := runExe(exe, dir, "import", abs2, "-o", filepath.Join(d2, "abs.json.mbt")); err != nil || rc != 0 {
+		return fmt.Errorf("d2 abs import rc=%d err=%v stderr=%q", rc, err, stderr)
+	}
+	a1, _ := os.ReadFile(filepath.Join(d1, "x.json.mbt"))
+	a2, _ := os.ReadFile(filepath.Join(d2, "x.json.mbt"))
+	b1, _ := os.ReadFile(filepath.Join(d1, "abs.json.mbt"))
+	b2, _ := os.ReadFile(filepath.Join(d2, "abs.json.mbt"))
+	trim := func(b []byte) []byte { return bytes.TrimRight(b, "\r\n") }
+	base := trim(a1)
+	for i, got := range [][]byte{trim(a2), trim(b1), trim(b2)} {
+		if !bytes.Equal(base, got) {
+			return fmt.Errorf("#49 产物 #%d 与基准逐字节不同（调用形态泄漏进产物头）:\n--base--\n%s\n--got--\n%s", i, base, got)
+		}
+	}
+	if bytes.Contains(base, []byte("d1")) || bytes.Contains(base, []byte("d2")) ||
+		bytes.Contains(base, []byte(":\\")) {
+		return fmt.Errorf("#49 产物头仍含路径形态:\n%s", base)
+	}
+	return nil
+}
+
 // caseConcurrentAtomicWrite：#45 红→绿锚。原子写曾用固定临时名
 // target.jsonmbt-tmp——并发写同一目标时进程互相 rename 走对方的 tmp，
 // 19/20 轮出现假失败（rc=4 J0002）而产物内容其实正确。修复 = 临时名
@@ -1773,6 +1823,7 @@ var cases = []testCase{
 	{"probe-samples-golden", caseProbeSamples},
 	{"sample-import-regen", caseSampleImportRegen},
 	{"build-stdout-deterministic", caseBuildDeterministic},
+	{"product-header-portable", caseProductHeaderPortable},
 	{"import-check-idempotent", caseImportCheckGate},
 	{"crlf-normalize-eol", caseCrlfNormalizeEol},
 	{"verb-flag-misuse", caseVerbFlagMisuse},

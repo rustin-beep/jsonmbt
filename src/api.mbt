@@ -309,6 +309,25 @@ pub fn fill_source(
     expected_name?,
   ) catch {
     e => {
+      // #48：内层码分流——值面家族（J3001..J3009）= 源 JSON 与类型头冲突
+      // （fill 忠实按类型头渲染值体，冲突即拦：保险丝工作正常，错在输入）
+      // → 透传内层码（rc 1 输入错）+ fill 场景前缀；其余（产物真非法 =
+      // render 链 bug）→ 保持 generator bug 保险丝。曾一律 J0002 rc=4
+      //「internal / please report」——用户被误导去提 issue 而非改类型头
+      if e is Diag(code~, loc~, message~, help~, path~) &&
+        (
+          code.num().has_prefix("J3") ||
+          code.num() == "J1002" ||
+          code.num() == "J1003"
+        ) {
+        raise Diag(
+          code~,
+          loc~,
+          message="fill: source JSON conflicts with the declared type header — \{message}",
+          help~,
+          path~,
+        )
+      }
       let detail : String = if e is Diag(..) {
         e.render()
       } else {

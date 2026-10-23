@@ -4,6 +4,25 @@
 
 ## [Unreleased]
 
+### Fixed（issue #48：--fill 值面冲突透传内层码——rc1 输入错，摘「generator bug」误导）
+
+- **现象**：源 JSON 与手写类型头冲突（`"str"` 填进 `k : Int32`）报 rc=4 +「internal: fill produced an invalid .json.mbt (generator bug) / please report this」——实为**用户输入与类型头冲突**（fill 忠实按类型头渲染值体，保险丝拦下是本职），rc 分级错位（D-10：4=IO/工具错、1=输入错）且文案误导用户提 issue 而非改类型头
+- **修法**：fill 回吃保险丝 catch 按内层码分流——**值面家族（J3001..J3009）与 JSON 输入语法/重复键**透传内层码（rc 1）+ `fill: source JSON conflicts with the declared type header —` 场景前缀与原处方 help；其余（产物真非法 = render 链 bug）保持 generator bug 保险丝（「绝不产出非法产物」行为不变）
+- **锚**：层 1 新锚（J3004 透传 + fill 前缀 + 无 generator bug 字样）——150 → **151**；红面 = issue 实测 console（J0002 rc=4）
+
+### Fixed（issue #49：产物头只记文件名——跨机可复现，--check 假漂移死循环解除）
+
+- **现象**：产物头记**调用时源路径原形**（绝对/相对随调用方式变）——产物跨机不可复现；CI（绝对路径）与本地（相对路径）形态不一致时 `import --check` **持续假漂移**（重新生成也解决不了——实测交替 4 轮 1:rc2、3:rc2 死循环）
+- **修法（issue 处方 B）**：头两行只记 **basename**（`/` `\` 双切）——「同内容任意目录任意调用形态产物逐字节相同」恢复（确定性硬锚承诺：无时间戳无版本戳也不该有路径戳）；诊断位置仍带完整路径不受损；`--check` 全量比对自然对齐（无需剥头特判）
+- **锚**：层 2 新金门 `product-header-portable`（同 JSON 两目录 × 相对/绝对两种调用形态，四份产物逐字节相同 + 头无路径形态）——46 → **47**；issue 实测背书：相对形态跨目录本就逐字节相同（B 可行性直接证据）
+
+### Fixed（issue #47：migrate 三榜标注与提示勘误——LAYOUT-EQ 副标 + 零扫描拆句）
+
+- **副标勘误**：转义记法差（`\u0041` vs `A`）parse 归一后消失 → 两侧规范形相等 → 实际落 **LAYOUT-EQ**（旧注释「转义差正确落 VALUE-EQ」与实现不符）——副标 `whitespace only` 改 **`layout/escape notation only`**（分类落点合理、标注语义对齐 19 例实测边界）
+- **零扫描拆句**：「无 .json」与「全部已迁移」不再混同一句话——目录真无 .json ⇒ `no .json found under '<root>'`；全部已有孪生 ⇒ `all <n> .json file(s) ... already have .json.mbt twins — nothing to migrate`（collect_json_files 增孪生跳过计数）
+- 层 2 47/47 零随迁（既有锚不断言此两条文案）
+
+
 ### Fixed（issue #45：原子写临时名进程唯一 + MoveFileExW 原子覆盖——并发写同一目标假失败根治）
 
 - **现象**：8 进程并发写同一产物目标，**19/20 轮出现假失败**（rc=4 J0002 `rename failed`/`cannot write tmp`），而产物内容 20/20 正确、零半截产物、零临时残留——坏在「不保证成功」而非原子性本身

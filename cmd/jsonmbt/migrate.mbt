@@ -16,12 +16,15 @@
 ///（#29：.vscode/.github/.devcontainer 类人写配置曾是 migrate 的核心受众
 /// 却被 `has_prefix(".")` 一刀切静默漏扫——随机 12 项目实测 650 张漏 42
 /// 张全在点目录）；跳过已有同名 .json.mbt 的——已迁移不重复报）。
-/// skipped_dirs 累积被跳过的目录名（报告声明用——静默漏扫即静默谎言）
+/// skipped_dirs 累积被跳过的目录名（报告声明用——静默漏扫即静默谎言）；
+/// twins_skipped 累积已有 .json.mbt 孪生而被跳过的 .json（#47——空目录
+/// 与「全部已迁移」两种零扫描成因拆句）
 fn collect_json_files(
   dir : String,
   prefix : String,
   out : Array[(String, String)], // (显示相对路径, 盘面路径)
   skipped_dirs : Array[String],
+  twins_skipped : Array[String],
 ) -> Unit {
   let entries = @fs.read_dir(dir) catch { _ => return }
   for e in entries {
@@ -30,6 +33,8 @@ fn collect_json_files(
     if e.has_suffix(".json") && file_exists(full) {
       if !file_exists(dir + "/" + e[:e.length() - 5].to_owned() + ".json.mbt") {
         out.push((disp, full))
+      } else {
+        twins_skipped.push(disp)
       }
     } else if dir_exists(full) {
       // 点目录只跳 .git（版本库内部——无迁移语义）；_build/node_modules/
@@ -39,7 +44,7 @@ fn collect_json_files(
           skipped_dirs.push(disp)
         }
       } else {
-        collect_json_files(full, disp + "/", out, skipped_dirs)
+        collect_json_files(full, disp + "/", out, skipped_dirs, twins_skipped)
       }
     }
   }
@@ -115,17 +120,23 @@ fn run_migrate(root_arg : String, write : Bool, jsonc~ : Bool = true) -> Int32 {
   print_out("jsonmbt migrate \{root_arg}\{if write { " --write" } else { "" }}")
   let files : Array[(String, String)] = []
   let skipped_dirs : Array[String] = []
-  collect_json_files(root_arg, "", files, skipped_dirs)
+  let twins_skipped : Array[String] = []
+  collect_json_files(root_arg, "", files, skipped_dirs, twins_skipped)
   // #29：跳过目录显式声明（静默漏扫即静默谎言——.git/_build/node_modules/target）
   if skipped_dirs.length() > 0 {
     print_out(
       "skipped \{skipped_dirs.length()} dir(s): \{skipped_dirs.join(", ")}",
     )
   }
+  // #47：零扫描的两种成因拆句——「真没有 .json」≠「全部已迁移」
   if files.length() == 0 {
-    print_out(
-      "no .json found under '\{root_arg}' (files with an existing .json.mbt twin are skipped)",
-    )
+    if twins_skipped.length() == 0 {
+      print_out("no .json found under '\{root_arg}'")
+    } else {
+      print_out(
+        "all \{twins_skipped.length()} .json file(s) under '\{root_arg}' already have .json.mbt twins — nothing to migrate",
+      )
+    }
     return 0
   }
   print_out("scanned: \{files.length()} json file(s)\n")
@@ -215,10 +226,12 @@ fn run_migrate(root_arg : String, write : Bool, jsonc~ : Bool = true) -> Int32 {
             }
           _ => false
         }
-        // #30 LAYOUT-EQ：仅排版差——原文件 parse 后紧凑归一与 built_compact
-        // **逐字节**等（值树+键序+转义规范形全等，差只在源文件的空白/换行
-        // 布局）。字符层"剥空白"会误伤字符串值内的语义空白，故用对称归一；
-        // 转义形态差（\u4e2d vs 中）与键序差正确落 VALUE-EQ
+        // #30 LAYOUT-EQ：非值语义差——原文件 parse 后紧凑归一与
+        // built_compact **逐字节**等（值树+键序+转义规范形全等，差只在源
+        // 文件的空白/换行布局）。字符层"剥空白"会误伤字符串值内的语义
+        // 空白，故用对称归一。#47 勘误：转义记法差（\u0041 vs A）parse
+        // 归一后同样消失 → 也落本榜（旧注「转义差落 VALUE-EQ」与实现
+        // 不符）——副标随之改「layout/escape notation only」
         let layout_eq = match (built_compact, parse_for_cmp(raw, jsonc)) {
           (Some(bc), Some(orig)) => orig.stringify() == bc
           _ => false
@@ -243,7 +256,7 @@ fn run_migrate(root_arg : String, write : Bool, jsonc~ : Bool = true) -> Int32 {
           }
         }
         if kind == "DIFF (round-trip mismatch — please report)" && layout_eq {
-          kind = "LAYOUT-EQ (whitespace only)"
+          kind = "LAYOUT-EQ (layout/escape notation only)"
           n_layout = n_layout + 1
         }
         if kind == "DIFF (round-trip mismatch — please report)" && value_eq {
