@@ -434,20 +434,44 @@ fn read_input(path : String) -> String raise @src.Diag {
 }
 
 ///|
-/// 原子写（D-8 ③）：同目录临时文件 + rename；失败清理临时文件
+/// #45：原子写临时名的进程唯一随机源（固定名在并发写同一目标时被互踩）
+let atomic_write_rand : @random.Rand = @random.new()
+
+///|
+/// 原子写（D-8 ③）：同目录临时文件 + rename；失败清理临时文件。
+/// #45：临时名带进程唯一随机串 + 失败换名重试（双保险）——固定名
+/// `target.jsonmbt-tmp` 在并发写同一目标时 A rename 时 tmp 已被 B
+/// rename 走，19/20 轮假失败（rc=4 J0002）而产物其实正确。重试耗尽
+/// 才报 J0002
 fn atomic_write(target : String, content : String) -> Unit raise @src.Diag {
-  let tmp = target + ".jsonmbt-tmp"
-  @fs.write_string_to_file(tmp, content) catch {
-    _ => raise io_diag("cannot write '\{tmp}'")
-  }
-  let from_b = @unicode.to_utf8_bytes(tmp)
   let to_b = @unicode.to_utf8_bytes(target)
-  if jsonmbt_rename(from_b, from_b.length(), to_b, to_b.length()) != 0 {
+  for attempt = 0; attempt < 8; attempt = attempt + 1 {
+    if attempt > 0 {
+      jsonmbt_sleep_ms(attempt * 4) // 退避（Windows 目标句柄瞬时持有重试即愈）
+    }
+    let tmp = target +
+      "." +
+      jsonmbt_getpid().to_string() +
+      "-" +
+      @env.now().to_string() +
+      "-" +
+      atomic_write_rand.int().to_string() +
+      "-" +
+      attempt.to_string() +
+      ".jsonmbt-tmp"
+    @fs.write_string_to_file(tmp, content) catch {
+      _ => continue // 名字冲突/瞬时占用——换名重试
+    }
+    let from_b = @unicode.to_utf8_bytes(tmp)
+    if jsonmbt_rename(from_b, from_b.length(), to_b, to_b.length()) == 0 {
+      return
+    }
     @fs.remove_file(tmp) catch {
       _ => ()
     }
-    raise io_diag("cannot finalize '\{target}' (rename failed)")
+    // rename 失败（tmp 被并发方抢走等）——换名重试
   }
+  raise io_diag("cannot finalize '\{target}' (rename failed)")
 }
 
 ///|

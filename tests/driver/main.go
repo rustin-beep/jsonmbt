@@ -206,7 +206,8 @@ func caseCrlfNormalizeEol(exe, dir string) error {
 	return nil
 }
 
-// usage-rc4：无参/未知动词 → rc 4（D-10 用法错）。
+// usage-rc4：无参/未知动词 → rc 4（D-10 用法错）；#41：build 行必须列出
+// --pretty/--indent（实际支持——usage 缺列曾让新用户发现不了逐字节对齐入口）。
 func caseUsageRC4(exe, dir string) error {
 	for _, args := range [][]string{{}, {"frobnicate", "x"}} {
 		rc, _, _, err := runExe(exe, dir, args...)
@@ -215,6 +216,18 @@ func caseUsageRC4(exe, dir string) error {
 		}
 		if rc != 4 {
 			return fmt.Errorf("args=%v rc = %d, want 4", args, rc)
+		}
+	}
+	_, _, stderr, err := runExe(exe, dir)
+	if err != nil {
+		return err
+	}
+	for _, frag := range []string{
+		"build <file.json.mbt...|-> [-o <out.json>|-] [--pretty] [--indent <n>]",
+		"--indent <n> sets the width (1..16) and only applies with --pretty",
+	} {
+		if !bytes.Contains(stderr, []byte(frag)) {
+			return fmt.Errorf("#41 usage build 行缺 flag %q:\n%s", frag, stderr)
 		}
 	}
 	return nil
@@ -633,6 +646,59 @@ func caseReservedFieldRoundtrip(exe, dir string) error {
 	want := []byte(`{"a":[{"where":"x","b":["t"]}]}`)
 	if !bytes.Equal(bytes.TrimRight(got, "\r\n"), want) {
 		return fmt.Errorf("round-trip 键还原失败\n--want--\n%q\n--got--\n%q", want, got)
+	}
+	return nil
+}
+
+// ancestor-keyset-split：#39/D-15 红→绿锚。祖先与后代键集相同的合法
+// JSON（纯键集签名曾并组 → J4012 误拒）——分组键加路径深度后拆为
+// 不同 struct；兄弟同深度合流 / 真漂移拒 / 同构数组（对照零变化）。
+func caseAncestorKeysetSplit(exe, dir string) error {
+	// 红用例 ×5（修复前全部 rc=1 J4012）；stdin 无 stem（D-7）——走文件输出
+	for i, j := range []string{
+		`{"a":{"a":1}}`,
+		`{"a":{"a":{"a":1}}}`,
+		`{"a":{"b":{"a":1}}}`,
+		`{"meta":{"meta":{"id":1}}}`,
+		`{"spec":{"spec":{"replicas":3}}}`,
+	} {
+		of := fmt.Sprintf("a39_%d.json.mbt", i)
+		rc, _, stderr, err := runExeWithStdin(exe, dir, j, "import", "-", "-o", of)
+		if err != nil {
+			return fmt.Errorf("%s import err=%v", j, err)
+		}
+		if rc != 0 {
+			return fmt.Errorf("#39 %s import rc=%d（祖先链同键集不得误拒）:\n%s", j, rc, stderr)
+		}
+		raw, _ := os.ReadFile(filepath.Join(dir, of))
+		if !strings.Contains(string(raw), "pub struct") {
+			return fmt.Errorf("#39 %s 产物形态异常:\n%s", j, raw)
+		}
+	}
+	// 拆分形态：顶层 stem 预命名 + 子组首键派生
+	rc, _, _, err := runExeWithStdin(exe, dir, `{"a":{"a":1}}`, "import", "-", "-o", "t39.json.mbt")
+	if err != nil || rc != 0 {
+		return fmt.Errorf("t39 import rc=%d err=%v", rc, err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "t39.json.mbt"))
+	s := string(b)
+	// 本目录红用例文件已声明 struct A → 子组 taken 前缀化 T39A（#4 行为）
+	if !strings.Contains(s, "pub struct T39A {") || !strings.Contains(s, "a : T39A") || !strings.Contains(s, "pub let t39 : T39") {
+		return fmt.Errorf("#39 拆分形态异常（期望 T39{a:T39A} + T39A{a:Int32}）:\n%s", s)
+	}
+	// 对照：兄弟同深度合流——判据 = x/y 字段共享同一子组类型（顶层 B39 恒存在）
+	rc2, _, stderr2, err := runExeWithStdin(exe, dir, `{"x":{"a":1},"y":{"a":2}}`, "import", "-", "-o", "b39.json.mbt")
+	if err != nil || rc2 != 0 {
+		return fmt.Errorf("兄弟对照 rc=%d err=%v stderr=%q", rc2, err, stderr2)
+	}
+	b2, _ := os.ReadFile(filepath.Join(dir, "b39.json.mbt"))
+	if !strings.Contains(string(b2), "x : B39A") || !strings.Contains(string(b2), "y : B39A") {
+		return fmt.Errorf("#39 兄弟同深度应合流共享组:\n%s", b2)
+	}
+	// 对照：真跨样本漂移照旧拒（J4012 fail loud 不被拆分吞掉）
+	rc3, _, stderr3, err := runExeWithStdin(exe, dir, `{"x":{"a":1},"y":{"a":"s"}}`, "import", "-", "-o", "c39.json.mbt")
+	if err != nil || rc3 != 1 || !bytes.Contains(stderr3, []byte("[J4012]")) {
+		return fmt.Errorf("#39 真漂移应 J4012 rc1: rc=%d stderr=%q err=%v", rc3, stderr3, err)
 	}
 	return nil
 }
@@ -1235,6 +1301,40 @@ func caseNeverPlaceholder(exe, dir string) error {
 	if a := string(prod); !strings.Contains(a, "pub enum ENever {}") || !strings.Contains(string(o), "pub enum ONever {}") {
 		return fmt.Errorf("#36 底型名未逐文件唯一:\n--e--\n%s\n--o--\n%s", a, o)
 	}
+	// #40：顶层空对象产 Map([])（moon [0082] 歧义字面量豁免——顶层 let
+	// 绑定位 `{}` 曾触发警告，违反「生成器产零警告形态」）
+	writeFile(dir, "z.json", `{}`)
+	if rc, _, _, err := runExe(exe, dir, "import", "z.json", "-o", "z.json.mbt"); err != nil || rc != 0 {
+		return fmt.Errorf("顶层空对象 import rc=%d err=%v", rc, err)
+	}
+	z, _ := os.ReadFile(filepath.Join(dir, "z.json.mbt"))
+	if !strings.Contains(string(z), "= Map([])") {
+		return fmt.Errorf("#40 顶层空对象应产 Map([]):\n%s", z)
+	}
+	if strings.Contains(string(z), "= {}") {
+		return fmt.Errorf("#40 顶层空对象不得产 {}:\n%s", z)
+	}
+	// 空容器产物小金门：三张落影子项目一次 moon check 断言零 Warning
+	//（[0082]/[0035] 同族警告都在此拦——moon 缺席 SKIP，金门同款）
+	if _, err := exec.LookPath("moon"); err == nil {
+		shadow := filepath.Join(dir, "shadow_never")
+		os.MkdirAll(shadow, 0o755)
+		os.WriteFile(filepath.Join(shadow, "moon.mod"), []byte("name = \"p/nevergate\"\nversion = \"0.1.0\"\n"), 0o644)
+		os.WriteFile(filepath.Join(shadow, "moon.pkg"), []byte("\n"), 0o644)
+		for _, f := range []string{"e.json.mbt", "o.json.mbt", "z.json.mbt"} {
+			raw, _ := os.ReadFile(filepath.Join(dir, f))
+			os.WriteFile(filepath.Join(shadow, f), raw, 0o644)
+		}
+		co := exec.Command("moon", "check")
+		co.Dir = shadow
+		coout, _ := co.CombinedOutput() // rc 恒 127 陷阱——判决看输出不看 rc
+		if strings.Contains(string(coout), "Warning") {
+			return fmt.Errorf("#40 空容器产物带 moon 警告（零警告形态破洞）:\n%s", coout)
+		}
+	} else {
+		fmt.Println("SKIP never 零警告金门（moon 缺席）")
+		skippedCases++
+	}
 	return nil
 }
 
@@ -1350,6 +1450,50 @@ func caseMigrateAstralBytes(exe, dir string) error {
 	}
 	if !bytes.Contains(out, []byte("bad.json → REJECT")) {
 		return fmt.Errorf("bad.json 未获 REJECT 判定（坏文件应只让自己失败）\nstdout=%s", out)
+	}
+	return nil
+}
+
+// caseConcurrentAtomicWrite：#45 红→绿锚。原子写曾用固定临时名
+// target.jsonmbt-tmp——并发写同一目标时进程互相 rename 走对方的 tmp，
+// 19/20 轮出现假失败（rc=4 J0002）而产物内容其实正确。修复 = 临时名
+// 加进程唯一随机串 + 失败换名重试。锚 = 8 进程并发写同一目标全 rc=0
+// 且产物逐字节正确；并发轮数 5（旧实现 19/20 轮红——天然证红面）。
+func caseConcurrentAtomicWrite(exe, dir string) error {
+	writeFile(dir, "c.json.mbt", "struct S {\n  a : Int\n}\npub let c : S = S::{ a: 1 }\n")
+	for round := 0; round < 5; round++ {
+		const procs = 8
+		errc := make(chan error, procs)
+		for p := 0; p < procs; p++ {
+			go func(p int) {
+				cmd := exec.Command(exe, "build", "c.json.mbt", "-o", "t.json")
+				cmd.Dir = dir
+				if out, err := cmd.CombinedOutput(); err != nil {
+					errc <- fmt.Errorf("round%d proc%d: %v\n%s", round, p, err, out)
+					return
+				}
+				errc <- nil
+			}(p)
+		}
+		for p := 0; p < procs; p++ {
+			if err := <-errc; err != nil {
+				return fmt.Errorf("#45 并发假失败（固定临时名被互踩）: %w", err)
+			}
+		}
+		got, err := os.ReadFile(filepath.Join(dir, "t.json"))
+		if err != nil {
+			return err
+		}
+		if want := []byte(`{"a":1}`); !bytes.Equal(bytes.TrimRight(got, "\r\n"), want) {
+			return fmt.Errorf("#45 并发产物内容错\n--want--\n%q\n--got--\n%q", want, got)
+		}
+		// 临时文件零残留
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if strings.Contains(e.Name(), "jsonmbt-tmp") {
+				return fmt.Errorf("#45 临时文件残留: %s", e.Name())
+			}
+		}
 	}
 	return nil
 }
@@ -1643,6 +1787,7 @@ var cases = []testCase{
 	{"fmt-fail-j0002", caseFmtFailJ0002},
 	{"reserved-field-roundtrip", caseReservedFieldRoundtrip},
 	{"j4010-container-grouping", caseJ4010ContainerGrouping},
+	{"ancestor-keyset-split", caseAncestorKeysetSplit},
 	{"j4011-map-escape-cause", caseJ4011MapEscapeCause},
 	{"j3009-alias-gate", caseJ3009AliasGate},
 	{"doctor-no-pkg", caseDoctorNoPkg},
@@ -1661,6 +1806,7 @@ var cases = []testCase{
 	{"fill", caseFill},
 	{"fill-source-name-mismatch", caseFillSourceNameMismatch},
 	{"default-output-name", caseDefaultOutputName},
+	{"concurrent-atomic-write", caseConcurrentAtomicWrite},
 	{"doctor-pipe-hint", caseDoctorPipeHint},
 	{"jsonc-input-profile", caseJsoncInputProfile},
 	{"reserved-words-full-table", caseReservedWordsFullTable},

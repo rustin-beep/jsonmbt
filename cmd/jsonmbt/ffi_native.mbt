@@ -32,4 +32,12 @@ extern "C" fn jsonmbt_run_cmd(cmd : Bytes, len : Int32) -> Int32 = "jsonmbt_run_
 
 ///|
 #cfg(target="native")
+extern "C" fn jsonmbt_getpid() -> Int32 = "jsonmbt_getpid"
+
+///|
+#cfg(target="native")
+extern "C" fn jsonmbt_sleep_ms(ms : Int32) -> Unit = "jsonmbt_sleep_ms"
+
+///|
+#cfg(target="native")
 extern "C" fn jsonmbt_is_windows() -> Int32 = "jsonmbt_is_windows"

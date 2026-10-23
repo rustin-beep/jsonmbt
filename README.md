@@ -57,7 +57,7 @@ MOON_CC=clang moon build          # 产物在 _build/native/*/build/cmd/jsonmbt/
 CLI 五动词：`build` / `check` / `import` / `doctor` / `migrate`。
 
 ```bash
-jsonmbt build <file.json.mbt...> [-o <out.json>|-] # 降级输出，默认同名 .json；-o - 走 stdout
+jsonmbt build <file.json.mbt...> [-o <out.json>|-] [--pretty [--indent N]] # 降级输出；--pretty 档与 Go json.Encoder 逐字节对齐
 jsonmbt check <file.json.mbt...>                   # 只校验不产出（= build 的 dry-run，不含降级链）
 jsonmbt import <file.json> [-o x.json.mbt] [--check|--fmt|--type-name-map m.json]
                                                    # JSON → .json.mbt（形状推断）；--check 幂等闸（rc=2 漂移）

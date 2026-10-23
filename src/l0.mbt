@@ -258,6 +258,42 @@ fn l0_expr(
           None =>
             raise not_literal(loc, "Some(...) with non-positional arguments")
         }
+        // #40：写侧顶层空对象产 Map([])（moon [0082] 歧义字面量豁免，
+        // 仅顶层 let 绑定位触发）——读侧对收，往返不断。**大写标识符
+        // 调用 parser 产 Constr 域**（Map([]) = Constr("Map") 应用，与
+        // Some 同域——曾放 Ident 臂永不命中）。恰一个空数组参数 = 空
+        // Map 字面量；带元素/非常量数组是计算面仍拒
+      } else if func is Constr(constr~, ..) && constr.name.name == "Map" {
+        let empty_arg : @syntax.Expr? = if args.length() == 1 {
+          match args.head() {
+            Some({ value, kind: Positional, }) => Some(value)
+            _ => None
+          }
+        } else {
+          None
+        }
+        match empty_arg {
+          Some(Array(exprs~, ..)) =>
+            if exprs.length() == 0 {
+              match ty {
+                Some(JTMap(JTString, _)) | None => Json::object(Map([]))
+                Some(JTMap(k, _)) =>
+                  raise type_mismatch(loc, k.show(), "String (map key)")
+                Some(other) =>
+                  raise type_mismatch(
+                    loc,
+                    other.show(),
+                    "Map[String, _]",
+                    help=Some(
+                      "Map([]) is the empty-map literal; it degrades to an empty JSON object",
+                    ),
+                  )
+              }
+            } else {
+              raise not_literal(loc, "Map(...) with elements")
+            }
+          _ => raise not_literal(loc, "Map(...) with non-array argument")
+        }
         // 带 payload 构造器：D-5 转正（§8 2026-10-07 二次裁定）——enum 单
         // payload 构造器字面量入 L0，降级投影 = tag 对象展开（payload 字段
         // 进顶层 + "case" tag 键）；标量 payload = {"case":名,"value":值}

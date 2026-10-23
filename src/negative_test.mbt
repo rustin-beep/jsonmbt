@@ -417,7 +417,7 @@ test "J2008 : struct 字段名为 moon 硬关键字——check 端自持判定�
   // 分级对照：`_` 在两份表里都有——库 parser 字段位直接拒（J1001 转发，
   // moonc 同向），走不到 J2008；错误提示还点名 `extend` = issue #38 现场
   expect_diag(
-    "struct S {\n  _ : String\n}\npub let t : S = S::{ _: \"x\" }\n", "jsonmbt: error [J1001] t.json.mbt:2:3 Unexpected token `_`, you may expect id (lowercase start), `extend`.\n  help: keep the file valid MoonBit: struct defs + one top-level pub let of literals",
+    "struct S {\n  _ : String\n}\npub let t : S = S::{ _: \"x\" }\n", "jsonmbt: error [J2008] t.json.mbt:2:3 field label '_' is a MoonBit hard keyword — moonc rejects it as a parse error\n  help: rename the field (e.g. '__') and add a field-alias marker: // jsonmbt: field-alias S.__ = \"_\"",
   )
   // 21 保留词字段照旧放行（moonc 警告级 [0035] 合法——分级对齐，非「比 moon 严」）
   let ok = "struct S {\n  module : String\n}\npub let t : S = S::{ module: \"x\" }\n"
@@ -425,5 +425,34 @@ test "J2008 : struct 字段名为 moon 硬关键字——check 端自持判定�
   inspect(
     @src.build_source(ok, path="t.json.mbt", expected_name="t"),
     content="{\"module\":\"x\"}",
+  )
+}
+
+///|
+test "J2008 : 硬关键字字段名 parser 抢先拒 → 转译带改名处方（#44 缺口二）" {
+  // 58 词中 57 个由 parser 抢先拒（J1001）——同份数据 import 路径有正规
+  // 改名通道、手写路径却只见语法错（可行动性分裂）。转译后与 extend 的
+  // J2008 体验对齐（红面 = issue #44 普查实测表：57/58 J1001）
+  expect_diag(
+    "struct Rule {\n  where : Int32\n}\npub let t : Rule = Rule::{ where: 1 }\n",
+    "jsonmbt: error [J2008] t.json.mbt:2:3 field label 'where' is a MoonBit hard keyword — moonc rejects it as a parse error\n  help: rename the field (e.g. 'where_') and add a field-alias marker: // jsonmbt: field-alias S.where_ = \"where\"",
+  )
+  // 构造位同转译（词 + `:` 形态通判）
+  expect_diag(
+    "struct S {\n  a : Int\n}\npub let t : S = S::{\n  match: 1,\n}\n", "jsonmbt: error [J2008] t.json.mbt:5:3 field label 'match' is a MoonBit hard keyword — moonc rejects it as a parse error\n  help: rename the field (e.g. 'match_') and add a field-alias marker: // jsonmbt: field-alias S.match_ = \"match\"",
+  )
+  // 非硬关键字语法错照旧 J1001（零假阳性回归面）——缺类型注解
+  expect_diag(
+    "struct S {\n  a :\n}\npub let t : S = S::{ a: 1 }\n", "jsonmbt: error [J1001] t.json.mbt:3:1 Unexpected token `}`, you may expect type.\n  help: keep the file valid MoonBit: struct defs + one top-level pub let of literals",
+  )
+}
+
+///|
+test "J2009 : struct 声明层重复字段——moon [4055] 对齐（#42 案例 B）" {
+  // 曾 jsonmbt 全绿且照常产出（值面 J3007 不覆盖声明层），moon 侧 [4055]
+  // field already declared——「check 通过 ≈ 可编译」承诺破洞
+  expect_diag(
+    "struct M {\n  id : Int32\n  id : String\n  name : String\n}\npub let t : M = M::{ id: 1, name: \"x\" }\n",
+    "jsonmbt: error [J2009] t.json.mbt:3:3 duplicate field 'id' in struct 'M'\n  help: remove or rename the duplicate — a struct's fields must be unique (moon [4055])",
   )
 }

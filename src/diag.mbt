@@ -34,6 +34,8 @@ pub(all) enum JCode {
   JMixedKeys // J4011 异值键对象：Map 逃生门不适用，请人工建模 struct
   JHeteroField // J4012 字段跨样本类型不相容
   JBigNum // J4020 超 Int64 整数（D-2 诚实拒绝；字符串化是显式 opt-in）
+  JPrecisionMix // J4021 同聚合 Int64+Double 混合（精度红线，#44——曾与 J4020 共码：两语义处方不同，下游按码分流不可混）
+  JDupFieldDecl // J2009 struct 声明层重复字段（#42 案例 B——值面 J3007 不覆盖声明层；moon [4055] 对齐）
   JTaggedEnumHint // J4030 疑似 tagged-enum 提示（hint 级，rc 0，建议手写 enum）
   JNeverHint // J4031 空容器 Never 占位提示（hint 级，rc 0，#14-2a——非空样本后换真类型）
   JDrift // J5001 --check 检测到漂移（rc 2——D-10 有义分叉，diff 族同段扩展）
@@ -72,6 +74,8 @@ pub fn JCode::num(self : JCode) -> String {
     JMixedKeys => "J4011"
     JHeteroField => "J4012"
     JBigNum => "J4020"
+    JPrecisionMix => "J4021"
+    JDupFieldDecl => "J2009"
     JTaggedEnumHint => "J4030"
     JNeverHint => "J4031"
     JDrift => "J5001"

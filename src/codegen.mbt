@@ -888,7 +888,17 @@ fn generate_source(
       let pfx = "pub let \{stem} : \{t.show()} = "
       buf.write_string("///|\n")
       buf.write_string(pfx)
-      buf.write_string(render_top_value(table, atab, root, Some(t), prefix=pfx))
+      // #40：顶层 let 绑定位空对象 `{}` 触发 moon [0082] ambiguous_braces
+      //（探针：六形态中仅此位报——字段/数组元素/Option/Map 值位有类型
+      // 上下文 moon 可消歧）——顶层产 Map([])（fmt 幂等探针实锚）；
+      // render_value 其余位不动（紧凑 `{}` 是零警告合法形态）
+      if root is Object(o) && o.length() == 0 {
+        buf.write_string("Map([])")
+      } else {
+        buf.write_string(
+          render_top_value(table, atab, root, Some(t), prefix=pfx),
+        )
+      }
       buf.write_string("\n")
     }
     None => {

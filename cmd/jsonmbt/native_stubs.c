@@ -14,6 +14,8 @@
 #include <windows.h>
 #else
 #include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
 #endif
 
 MOONBIT_FFI_EXPORT moonbit_bytes_t jsonmbt_read_stdin(void) {
@@ -75,12 +77,13 @@ static wchar_t *jsonmbt_utf8_to_wchar(const char *s, int32_t len) {
 MOONBIT_FFI_EXPORT int jsonmbt_rename(moonbit_bytes_t from, int32_t from_len,
                                       moonbit_bytes_t to, int32_t to_len) {
 #ifdef _WIN32
-  // MSVC 的 rename 不覆盖已存在目标：先 remove 再 rename（微小窗口期登记为
-  // 平台限制——POSIX 侧 rename 天然原子覆盖）
+  // #45：MoveFileExW(REPLACE_EXISTING) 同卷原子覆盖——旧两步实现
+  // （_wremove + _wrename）在并发 finalize 同一目标时，remove 会撞上
+  // 他人 rename 进行中的目标句柄（ACCESS_DENIED），随后 rename 又因
+  // 目标仍存在而失败——竞态窗口即假失败源
   wchar_t *wto = jsonmbt_utf8_to_wchar((const char *)to, to_len);
-  _wremove(wto);
   wchar_t *wfrom = jsonmbt_utf8_to_wchar((const char *)from, from_len);
-  int r = _wrename(wfrom, wto);
+  int r = MoveFileExW(wfrom, wto, MOVEFILE_REPLACE_EXISTING) ? 0 : -1;
   free(wfrom);
   free(wto);
   return r;
@@ -119,6 +122,25 @@ MOONBIT_FFI_EXPORT int jsonmbt_run_cmd(moonbit_bytes_t cmd, int32_t len) {
   }
 #endif
   return rc;
+}
+
+MOONBIT_FFI_EXPORT void jsonmbt_sleep_ms(int32_t ms) {
+#ifdef _WIN32
+  Sleep((DWORD)ms);
+#else
+  struct timespec ts;
+  ts.tv_sec = ms / 1000;
+  ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+  nanosleep(&ts, NULL);
+#endif
+}
+
+MOONBIT_FFI_EXPORT int jsonmbt_getpid(void) {
+#ifdef _WIN32
+  return (int)GetCurrentProcessId();
+#else
+  return (int)getpid();
+#endif
 }
 
 MOONBIT_FFI_EXPORT int jsonmbt_is_windows(void) {

@@ -167,6 +167,28 @@ fn signature_of_keys(keys : Array[String]) -> String {
 }
 
 ///|
+/// 容器路径深度（#39/D-15 分组键维度）：`.` 计数——`$`=0、`$.a`=1、
+/// `$.a.b`=2；`[]` 不计（数组元素与宿主字段同层透明——同构数组/D-1
+/// 二级启发依赖该合流）。分隔符 \u{2} 与键集 join 的 \u{1} 异符防歧义
+fn path_depth(path : String) -> Int32 {
+  let mut d = 0
+  for ch in path {
+    if ch == '.' {
+      d = d + 1
+    }
+  }
+  d
+}
+
+///|
+/// 形状分组键 = 键集签名 + 路径深度（#39/D-15）——**唯一构造点**：
+/// prename_top_group 与 walk_as_struct 必须经此同构（曾两处手拼，
+/// prename 漏深度 → 顶层预命名 miss 退化为首键派生名 Config→Port）
+fn group_sig(keys : Array[String], path : String) -> String {
+  signature_of_keys(keys) + "\u{2}" + path_depth(path).to_string()
+}
+
+///|
 /// 主入口：值树 → struct 集 + 顶层类型（walk 收集 → 组定稿 → D-1 二级启发）
 fn infer_shapes(
   root : Json,
@@ -392,7 +414,7 @@ fn prename_top_group(ctx : InferCtx, root : Json) -> Unit raise Diag {
   if root is Object(o) && o.length() > 0 {
     let keys : Array[String] = []
     o.each(fn(k, _) { keys.push(k) })
-    let sig = signature_of_keys(keys)
+    let sig = group_sig(keys, "$")
     let name = alloc_type_name(ctx, capitalize(ctx.stem))
     ctx.name_cache[sig] = name
   }
@@ -699,8 +721,12 @@ fn walk_as_struct(
   o : Map[String, Json],
   path~ : String = "$",
 ) -> JType raise Diag {
-  // 签名 = 原始 JSON 键集（键集语义属 JSON 真相；改名只发生在 label 侧）
-  let sig = signature_of_keys(keys)
+  // 签名 = 原始 JSON 键集 + 路径深度（#39/D-15：纯键集签名曾把祖先与
+  // 后代同键集的对象并组——`{"a":{"a":1}}` lub 冲突 J4012 误拒；加深度
+  // 后祖先链拆为不同 struct。`[]` 不计深度 = 数组元素与宿主同层透明，
+  // 兄弟同深度合流 / D-2 上浮 / 同构数组零变化。键集语义属 JSON 真相；
+  // 改名只发生在 label 侧）
+  let sig = group_sig(keys, path)
   if !ctx.groups.contains(sig) {
     let g : ShapeGroup = {
       fields: [],
@@ -825,7 +851,7 @@ fn lub(
     (JTInt, JTDouble) | (JTDouble, JTInt) => JTDouble
     (JTInt64, JTDouble) | (JTDouble, JTInt64) =>
       raise Diag(
-        code=JBigNum,
+        code=JPrecisionMix,
         loc=dummy_loc(),
         message="Int64 and Double in the same aggregate: widening would silently lose precision",
         help=Some("store the numbers consistently, or hand-model the field"),

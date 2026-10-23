@@ -4,6 +4,51 @@
 
 ## [Unreleased]
 
+### Fixed（issue #45：原子写临时名进程唯一 + MoveFileExW 原子覆盖——并发写同一目标假失败根治）
+
+- **现象**：8 进程并发写同一产物目标，**19/20 轮出现假失败**（rc=4 J0002 `rename failed`/`cannot write tmp`），而产物内容 20/20 正确、零半截产物、零临时残留——坏在「不保证成功」而非原子性本身
+- **根因两层**：① 临时名固定（`target.jsonmbt-tmp`）——并发进程共用、互踩；② `jsonmbt_rename` Windows 分支 = `_wremove + _wrename` 两步——remove 会撞上他人 rename 进行中的目标句柄（ACCESS_DENIED），随后 rename 又因目标仍存在而失败（竞态窗口即假失败源）
+- **修法三保险**：临时名 = **PID + 时钟 + 进程内随机 + 重试计数**（`jsonmbt_getpid` 新增 FFI——`@random` 在缺熵平台回退固定 seed，进程唯一性必须 PID 兜底）；`MoveFileExW(MOVEFILE_REPLACE_EXISTING)` **同卷原子覆盖**替代两步 remove+rename；重试 3→8 次 + 线性退避（`jsonmbt_sleep_ms` FFI）
+- **锚**：层 2 新锚 `concurrent-atomic-write`（8 进程 × 5 轮并发写同一目标全 rc=0 + 产物逐字节正确 + 临时零残留）——旧 exe 一轮即红（round0 proc0 rc=4 与 issue 实测同形态），新实现 **4 连跑全绿**——44 → **46**
+
+### Fixed（issue #44：诊断码面两缺口——J4021 切码 + J1001→J2008 转译，30 码普查反馈）
+
+- **缺口一（J4021 新码）**：J4020 曾一码两语义——「超 Int64」（改数据表示）与「同聚合 Int64+Double 混合」（统一数字表示）处方完全不同，下游按码分流不可混。按 D-10 只增不改：lub 混合精度切 **J4021**（JPrecisionMix），J4020 保留原语义
+- **缺口二（可行动性分裂）**：58 硬关键字字段名手写路径 57/58 只拿 J1001「语法错」（parser 抢先拒）——同份数据 import 路径有正规改名通道、手写路径只见语法错。修法 = analyze 在 parser 报告转发前做**行级转译**：报告行 `<word> :` 形态且词在硬关键字表（moon_facts 单源）→ 转报 J2008 带改名 + field-alias 处方（与 `extend` 体验对齐；行级判定零假阳性——parser 已指认出错行）
+- **锚**：层 1 J4021 锚随迁（J4020→J4021）+ J2008 转译锚 ×2（声明位/构造位）+ 非关键字 J1001 回归对照 + `_` 锚随迁（J1001→J2008）——148 → **150**；mbti 接口面 +2 码
+
+### Fixed（issue #42 案例 B：struct 声明层重复字段 J2009——moon [4055] 对齐）
+
+- **现象**：`pub struct M { id : Int32; id : String; ... }` 声明层重复字段——jsonmbt 全绿且照常产出（值面 J3007 不覆盖声明层），moon 侧 [4055] 红。「check 通过 ≈ 可编译」破洞
+- **修法**：`collect_tyenv` Record 臂收字段时查重，重复即 **J2009**（JDupFieldDecl 新码——声明层/值层分属不同校验层，按码分流不复用 J3007）
+- **锚**：层 1 先红（放行实证）后绿；**案例 A（顶层裸 record）与 `--moon-check` 深验通道挂 §8 裁定**（[issue 评论](https://github.com/rustin-beep/jsonmbt/issues/42#issuecomment-6370021862)——裸 record 判非法 = 存量 breaking change，须用户拍板）
+
+
+### Fixed（issue #39 / D-15：形状签名分组键加路径深度——祖先链同键集不再 J4012 误拒）
+
+- **现象**：`signature_of_keys` = 纯键集签名，祖先与后代键集相同的合法 JSON 被并组 → `lub` 冲突 **J4012 误拒**（rc=1）。`{"a":{"a":1}}`、K8s 风格 `{"spec":{"spec":{"replicas":3}}}` 等五类形态全红；键名池小时实测 **~1% 误拒率**（2469 张压测未抓到——语料键名分布丰富，小词表真实分布不同——外部反馈的首个压测盲区实证）
+- **修法（D-15，三案对比见 PLAN §8）**：分组键 = 键集签名 + **路径深度**（`.` 计数，`[]` 透明 = 数组元素与宿主同层）。祖先链（异深度）拆为不同 struct（顶层 = stem 预命名、子组 = 首键派生）；兄弟同深度合流 / D-2 上浮 / 同构数组**零变化**。签名构造收敛单一函数 `group_sig`——曾两处手拼（prename_top_group 漏深度 → 顶层预命名 miss 退化首键派生 `Config`→`Port`，全量快照锚连环红当场暴露——统一真相来源纪律的即时回报）
+- **锚**：层 1 #39 锚先红（J4012 误拒实证）后绿 + 对照 ×4（兄弟合流/真漂移拒/数组合流零变化）——147 → **148**；层 2 新锚 `ancestor-keyset-split`（5 红用例 rc=0 + 拆分形态 + 兄弟共享组 + 真漂移 J4012）——44 → **45**
+- **破坏面探针**：既有锚全部处同深度象限（往返锚 `{"h":{"a":1},"z":{"a":2}}`、D-2 上浮、#32-15 键序锚）——零重录
+
+### Fixed（issue #40：顶层空对象产 `Map([])`——moon [0082] 歧义字面量豁免，「生成器产零警告形态」补洞）
+
+- **现象**：顶层为空对象的 import 产物 `pub let t : Map[String, TNever] = {}` 触发 moon **[0082] ambiguous_braces 警告**——「生成器产零警告零错误形态」（moon_facts.mbt）的直接反例
+- **探针定案**：六形态中**仅顶层 let 绑定位触发**（字段位/数组元素/Option/Map 值位有类型上下文 moon 可消歧）——顶层特判产 `Map([])`（fmt 幂等探针实锚），其余位保持紧凑 `{}`
+- **读侧对收（红→绿暴露）**：写侧改后 build/check 回吃断——L0 校验器 Apply 臂补 `Map([])` 空 Map 字面量形态。**MoonBit 语法坑实录**：大写标识符调用 parser 产 **Constr 域**（`Map([])` = `Constr("Map")` 应用与 `Some` 同域，放 Ident 臂永不命中）；is 模式绑定变量名必须精确等于变体 label（`constr~`，不可重命名）
+- **锚**：层 1 #40 锚（stash 证红 `= {}` 实证 → 绿 + 字段位不跟随断言）——146 → 147；层 2 `never-placeholder` 扩展（三张空容器产物落影子项目一次 `moon check` 断言**零 Warning**——空容器产物小金门常驻）
+
+### Fixed（issue #41：usage build 行补 `--pretty`/`--indent`）——**外部贡献首例**
+
+- **外部贡献者 pralav-25 提交 17c3db6 已入库**（usage 补两参数 + `--indent <n> sets the width (1..16)` 说明行；issue 已关单）。**本仓第一个外部 PR**——issue #41 提出（2026-10-23）当日即有外部响应，push 转 CI 绿后反馈循环启动的首个实证
+- 本批补齐：README 命令表 build 行同步 + 层 2 `usage-rc4` 锚加 usage 文本断言（两行防再退化）
+
+### 工具链观察（moon 0.1.20261023）
+
+- 本地工具链升级后 `moon info` 输出**不再归一类型别名**（mbti 接口面 `Int32`→`Int` 形——同型别名语义零差）；`moon fmt` 对手写 `Int` 仍归一 `Int32`（探针实证）——D-13「生成器产 Int32」裁定不受影响（fmt-fixed-point 金门绿）。生成物 mbti 跟随当前工具链输出入库
+- 发布前置探明（0.1.0 挂起待发）：`moon publish` 的 `--no-mbti` 断供已在 0.1.20261023 修复——dry-run 全链通过（registry 服务器端 202 验证 vitro/jsonmbt@0.1.0），发布物 zip 边界审查干净（73 文件 292K）
+
+
 ### Fixed（issue #37：taken 前缀化家族自洽——后续同基名组不退回未前缀 dedup）
 
 - **现象**：`alloc_type_name` 的跨文件撞名前缀化（#4）只对组「首个」名生效——同文件**后续**同基名组在前缀名被占后退回**未前缀** `dedup`，去抢全局裸名号段（MoUI `checks/` 17 文件实测：`harmonyos.json` 产 `HarmonyosStatus, Status5, Status6, Status7`，期望 `HarmonyosStatus, HarmonyosStatus2, HarmonyosStatus3`）。非正确性缺陷（#24 后无撞名、产物能编译），属命名面质量：名字与源文件失联 + 号段随目录文件数/顺序漂移

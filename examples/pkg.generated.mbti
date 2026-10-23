@@ -8,10 +8,10 @@ pub let server : Server
 
 // Types and methods
 pub struct Server {
-  port : Int32
+  port : Int
   host : String
   tags : Array[String]
-  retries : Int32?
+  retries : Int?
 }
 
 // Type aliases

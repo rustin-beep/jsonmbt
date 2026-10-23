@@ -95,6 +95,19 @@ fn collect_tyenv(impls : @list.List[@syntax.Impl]) -> TypeEnv raise Diag {
             }
             let fs : Array[(String, JType, @basic.Location)] = []
             for f in fields {
+              // J2009（#42 案例 B）：声明层重复字段——曾只查值面 J3007，
+              // struct 声明重复 jsonmbt 全绿照常产出而 moon [4055] 红
+              if fs.iter().find_first(fn(x) { x.0 == f.name.label }) is Some(_) {
+                raise Diag(
+                  code=JDupFieldDecl,
+                  loc=f.loc,
+                  message="duplicate field '\{f.name.label}' in struct '\{name}'",
+                  help=Some(
+                    "remove or rename the duplicate — a struct's fields must be unique (moon [4055])",
+                  ),
+                  path="",
+                )
+              }
               fs.push((f.name.label, parse_type(f.ty), f.loc))
             }
             structs[name] = { name, fields: fs, aliases: Map([]), }

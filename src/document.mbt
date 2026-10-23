@@ -24,6 +24,76 @@ fn syntax_diag(r : @basic.Report, path : String) -> Diag {
 }
 
 ///|
+/// #44：parser 抢先拒的硬关键字字段名 → 转译 J2008（改名 + field-alias
+/// 处方，与 `extend` 的现行体验对齐）——58 词中 57 个曾只拿 J1001「语法
+/// 错」（可行动性分裂：同份数据 import 路径有正规改名通道、手写路径却
+/// 只见语法错）。行级判定零假阳性风险：parser 已指认出错行，行首
+/// `<word> :` 形态且词在硬关键字表（moon_facts 单源）才转译
+fn hard_keyword_field_diag(
+  src : String,
+  r : @basic.Report,
+  path : String,
+) -> Diag {
+  let lnum = r.loc.start.lnum
+  let mut raw : StringView? = None
+  let mut cur = 1
+  for line in src.split("\n") {
+    if cur == lnum {
+      raw = Some(line)
+      break
+    }
+    cur = cur + 1
+  }
+  if raw is Some(rv) {
+    let raw = rv
+    // 剥行首空白与行尾 \r（CRLF 源）
+    let mut a = 0
+    let n = raw.length()
+    let view = raw[:]
+    while a < n && (view[a] == ' ' || view[a] == '\t') {
+      a = a + 1
+    }
+    let mut e = n
+    if e > a && view[e - 1] == '\r' {
+      e = e - 1
+    }
+    // 提取行首标识符词（[a-z_][A-Za-z0-9_]*）
+    let mut b = a
+    if b < e && ((view[b] >= 'a' && view[b] <= 'z') || view[b] == '_') {
+      b = b + 1
+      while b < e &&
+            (
+              (view[b] >= 'a' && view[b] <= 'z') ||
+              (view[b] >= 'A' && view[b] <= 'Z') ||
+              (view[b] >= '0' && view[b] <= '9') ||
+              view[b] == '_'
+            ) {
+        b = b + 1
+      }
+      let word = view[a:b].to_owned()
+      // 跳过词后空白再看 `:`（声明位 `where : Int32` / 构造位 `where: 1`）
+      let mut c = b
+      while c < e && (view[c] == ' ' || view[c] == '\t') {
+        c = c + 1
+      }
+      // 声明位/构造位通判：词后跟 `:`（字段位形态）且词在硬表
+      if c < e && view[c] == ':' && is_hard_keyword(word) {
+        return Diag(
+          code=JHardKeywordField,
+          loc=r.loc,
+          message="field label '\{word}' is a MoonBit hard keyword — moonc rejects it as a parse error",
+          help=Some(
+            "rename the field (e.g. '\{word}_') and add a field-alias marker: // jsonmbt: field-alias S.\{word}_ = \"\{word}\"",
+          ),
+          path~,
+        )
+      }
+    }
+  }
+  syntax_diag(r, path)
+}
+
+///|
 const FIELD_ALIAS_PREFIX : String = "// jsonmbt: field-alias "
 
 ///|
@@ -183,7 +253,7 @@ fn analyze(
 ) -> Doc raise Diag {
   let (impls, reports) = @parser.parse_string(src, name=path)
   if reports.length() > 0 {
-    raise syntax_diag(reports[0], path)
+    raise hard_keyword_field_diag(src, reports[0], path)
   }
   // field-alias 注记（#13）：预扫描（注释层——parser 剥掉）+ 语义校验附着
   let alias_marks = scan_field_aliases(src, path)

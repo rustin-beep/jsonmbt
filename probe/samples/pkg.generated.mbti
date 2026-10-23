@@ -46,7 +46,7 @@ pub struct Id {
 }
 
 pub struct Inner {
-  x : Int32
+  x : Int
   ratio : Double
 }
 
@@ -56,10 +56,10 @@ pub struct Reserved_keys {
 }
 
 pub struct Server {
-  port : Int32
+  port : Int
   host : String
   tags : Array[String]
-  retries : Int32?
+  retries : Int?
 }
 
 pub struct Tsconfig_like {

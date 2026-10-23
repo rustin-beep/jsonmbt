@@ -154,9 +154,11 @@ test "J4020 : 超 Int64 诚实拒绝（D-2）" {
 }
 
 ///|
-test "J4020 : Int64 与 Double 混合拒绝（静默 Double 化 = 精度红线）" {
+test "J4021 : Int64 与 Double 混合拒绝（静默 Double 化 = 精度红线，#44 切码）" {
+  // 曾与 J4020 共码——两语义处方不同（超 Int64 = 改数据表示；混合 =
+  // 统一数字表示），D-10 下游按码分流不可混（#44 普查坐实后切出）
   expect_import_diag(
-    "{\"items\":[{\"v\":9223372036854775807},{\"v\":1.5}]}", "J4020",
+    "{\"items\":[{\"v\":9223372036854775807},{\"v\":1.5}]}", "J4021",
   )
 }
 
@@ -1581,4 +1583,64 @@ test "#38 D-14② : sanitize_stem 分级——硬词前缀、保留词/删除词
   inspect(@src.sanitize_stem("Match"), content="x_match")
   inspect(@src.sanitize_stem("_"), content="x__")
   inspect(@src.sanitize_stem("view"), content="view")
+}
+
+///|
+test "#40 : 顶层空对象产 Map([])——moon [0082] 歧义字面量豁免" {
+  // 顶层 let 绑定位 `{}` 触发 moon [0082]（探针：六形态中仅此位报——
+  // 字段/数组元素/Option/Map 值位有类型上下文可消歧）——顶层特判产
+  // Map([])（fmt 幂等）；字段位不动（紧凑 {} 是零警告合法形态）
+  let out = do_import("{}", stem="t")
+  inspect(
+    out.contains("pub let t : Map[String, TNever] = Map([])"),
+    content="true",
+  )
+  inspect(out.contains("= {}"), content="false")
+  // 字段位空对象保持紧凑 {}（有类型上下文零警告——不跟随顶层特判）
+  let nested = do_import("{\"cfg\": {}}", stem="o")
+  inspect(nested.contains("cfg : Map[String, ONever]"), content="true")
+  inspect(nested.contains("cfg: {},"), content="true")
+  let _ = @src.build_source(out, path="t.json.mbt", expected_name="t")
+  let _ = @src.build_source(nested, path="o.json.mbt", expected_name="o")
+}
+
+///|
+test "#39 : 祖先链同键集不再误合流——深度进签名（D-15）" {
+  // 纯键集签名曾把祖先与后代同键集的对象并组（lub 冲突 → J4012 误拒，
+  // K8s 风格 {"spec":{"spec":...}} 高发）；分组键加路径深度（`.` 计数、
+  // [] 透明）后祖先链拆为不同 struct，兄弟同深度合流零变化
+  // 红用例 ×5（修复前全部 J4012 误拒）
+  for
+    j in [
+      "{\"a\":{\"a\":1}}", "{\"a\":{\"a\":{\"a\":1}}}", "{\"a\":{\"b\":{\"a\":1}}}",
+      "{\"meta\":{\"meta\":{\"id\":1}}}", "{\"spec\":{\"spec\":{\"replicas\":3}}}",
+    ] {
+    let out = do_import(j, stem="t")
+    let _ = @src.build_source(out, path="t.json.mbt", expected_name="t")
+  }
+  // 拆分形态：两个 struct——顶层 = stem 预命名（T），子组 = 首键派生（A）
+  let out1 = do_import("{\"a\":{\"a\":1}}", stem="t")
+  inspect(out1.contains("pub struct A {"), content="true")
+  inspect(out1.contains("a : A"), content="true")
+  inspect(out1.contains("pub let t : T"), content="true")
+  inspect(out1.contains("a : Int32"), content="true")
+  // 对照 ×4（既有合流/拒绝语义零变化）
+  inspect(
+    do_import("{\"a\":{\"b\":1}}", stem="t").contains("pub struct B"),
+    content="true",
+  )
+  let brothers = do_import("{\"x\":{\"a\":1},\"y\":{\"a\":1}}", stem="t")
+  inspect(brothers.contains("pub struct A {"), content="true")
+  inspect(brothers.contains("pub struct A2"), content="false") // 兄弟同深度仍合流单组
+  let drift = try {
+    let _ = do_import("{\"x\":{\"a\":1},\"y\":{\"a\":\"s\"}}", stem="t")
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(drift.contains("[J4012]"), content="true") // 真漂移照旧 fail loud
+  inspect(
+    do_import("{\"list\":[{\"a\":1},{\"a\":2}]}", stem="t").contains("Array[A]"),
+    content="true",
+  ) // 同构数组合流保持
 }
