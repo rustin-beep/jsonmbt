@@ -36,6 +36,8 @@ pub(all) enum JCode {
   JBigNum // J4020 超 Int64 整数（D-2 诚实拒绝；字符串化是显式 opt-in）
   JPrecisionMix // J4021 同聚合 Int64+Double 混合（精度红线，#44——曾与 J4020 共码：两语义处方不同，下游按码分流不可混）
   JDupFieldDecl // J2009 struct 声明层重复字段（#42 案例 B——值面 J3007 不覆盖声明层；moon [4055] 对齐）
+  JNoTypeHeader // J2010 顶层复合字面量缺类型标注（#42 案例 A——moon [4074] Cannot infer 对齐：record/Map/数组/Option 字面量无标注 moon 不可推断）
+  JOverwriteGuard // J5002 拒绝覆盖手写目标（#46 方案 c——import 目标无 @generated 标注 = 人工审阅成果，rc 2 指路 --force）
   JTaggedEnumHint // J4030 疑似 tagged-enum 提示（hint 级，rc 0，建议手写 enum）
   JNeverHint // J4031 空容器 Never 占位提示（hint 级，rc 0，#14-2a——非空样本后换真类型）
   JDrift // J5001 --check 检测到漂移（rc 2——D-10 有义分叉，diff 族同段扩展）
@@ -76,6 +78,8 @@ pub fn JCode::num(self : JCode) -> String {
     JBigNum => "J4020"
     JPrecisionMix => "J4021"
     JDupFieldDecl => "J2009"
+    JNoTypeHeader => "J2010"
+    JOverwriteGuard => "J5002"
     JTaggedEnumHint => "J4030"
     JNeverHint => "J4031"
     JDrift => "J5001"
@@ -89,7 +93,7 @@ pub fn JCode::exit_code(self : JCode) -> Int32 {
   match self {
     JUsage | JIO => 4
     JTaggedEnumHint | JNeverHint => 0
-    JDrift => 2
+    JDrift | JOverwriteGuard => 2 // 漂移/落盘保护拒绝——「需人裁决」语义段
     _ => 1
   }
 }

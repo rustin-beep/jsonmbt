@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### Fixed（issue #42 案例 A / D-16：顶层 record 字面量缺类型标注 J2010——moon [4074] 对齐，Map/数组自由值保留）
+
+- **现象**（用户 21 例形态普查 + 本仓探针双实证）：`pub let m = { a: 1 }`（裸 record）、`pub let m = M::{ a: 1 }`（具名构造无标注）——jsonmbt **rc=0 全绿且照常产出**，moon 侧 `[4074]` Cannot infer + `[4033]` no record definition——真相源在 moon 编译面是坏的，CI 只看 jsonmbt 绿即被掩盖
+- **修法（新码 J2010，裁定口径 = record 家族）**：顶层 pub let 无类型标注且值为 **Record 变体**（裸花括号对象 / 具名构造）→ 拒；**Map 字面量（带引号键）与数组/Some 自由值保留合法**——它们是既有正样本能力（api_test 锚成体系），moon 侧同形态 [4074] = 「moon 严于 jsonmbt」的有意差集（#16「不比 moon 严」的反向不违承诺），扩展拒收留痕 issue 另议
+- **锚**：层 1 先红（BUILD-SUCCEEDED 放行实证）后绿 + 保留面对照 ×3（Map 字面量/数组/标量）——151 → **152**；mbti +JNoTypeHeader(J2010)
+
+### Fixed（issue #46：落盘静默覆盖——按 @generated 标注分派（方案 c），手写 .json.mbt 保护 J5002）
+
+- **现象**：import 目标已存在时**一律静默覆盖**——手写 .json.mbt（人工审阅命名 / field-alias 注记所在）被无声抹掉；Windows 大小写变体互覆盖；build 默认输出改写源 JSON 无点名提示
+- **修法（方案 c，用户拍板）**：import 落盘闸 `guard_import_overwrite`——目标首行含 `@generated` 标注（机器产物）⇒ 覆盖照旧 + note；**无标注 = 手写 ⇒ 拒 J5002（rc 2，与漂移同「需人裁决」语义段）**+ help 指路 `--force`；新增 import `--force` flag（跳过保护）。附带**大小写变体探测**（落盘前 read_dir 比对，命中即 note）与 **build 默认输出命中已存在文件的点名 note**（CI 再生链路不设拒，只提示）
+- **锚**：层 2 新锚 `overwrite-guard`（机器覆盖 note / 手写拒 rc2 且内容不破坏 / --force 覆盖 / 大小写 note / build 点名五态）——47 → **48**
+
+
 ### Fixed（issue #48：--fill 值面冲突透传内层码——rc1 输入错，摘「generator bug」误导）
 
 - **现象**：源 JSON 与手写类型头冲突（`"str"` 填进 `k : Int32`）报 rc=4 +「internal: fill produced an invalid .json.mbt (generator bug) / please report this」——实为**用户输入与类型头冲突**（fill 忠实按类型头渲染值体，保险丝拦下是本职），rc 分级错位（D-10：4=IO/工具错、1=输入错）且文案误导用户提 issue 而非改类型头

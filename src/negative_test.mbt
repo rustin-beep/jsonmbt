@@ -456,3 +456,35 @@ test "J2009 : struct 声明层重复字段——moon [4055] 对齐（#42 案例 
     "jsonmbt: error [J2009] t.json.mbt:3:3 duplicate field 'id' in struct 'M'\n  help: remove or rename the duplicate — a struct's fields must be unique (moon [4055])",
   )
 }
+
+///|
+test "J2010 : 顶层复合字面量缺类型标注——moon [4074] 对齐（#42 案例 A）" {
+  // 用户 21 例普查 + 本仓探针实锚：moon 对 record/Map/数组/Some 的无标注
+  // 顶层一律 [4074] Cannot infer（仅标量/Tuple 可推断）——jsonmbt 曾全绿
+  // 且照常产出，真相源在 moon 编译面是坏的（差集四类之根因①）
+  expect_diag(
+    "pub let t = { a: 1 }\n", "jsonmbt: error [J2010] t.json.mbt:1:1 top-level binding has no type annotation — moonc cannot infer record/map/array/option literals ([4074])\n  help: add `: <Type>` to the binding — the type header is part of the document, not decoration",
+  )
+  expect_diag(
+    "struct M {\n  a : Int32\n}\npub let t = M::{ a: 1 }\n", "jsonmbt: error [J2010] t.json.mbt:4:1 top-level binding has no type annotation — moonc cannot infer record/map/array/option literals ([4074])\n  help: add `: <Type>` to the binding — the type header is part of the document, not decoration",
+  )
+  // Map 字面量（带引号键）与数组/Some 无标注 moon 亦 [4074]，但为既有
+  // 合法自由值形态（api_test 正样本锚成体系；「moon 严于 jsonmbt」反向
+  // 差集不违 #16）——不拒，扩展面留痕 issue 另议
+  let _ = @src.build_source(
+    "pub let t = { \"a\": 1 }\n",
+    path="t.json.mbt",
+    expected_name="t",
+  )
+  let _ = @src.build_source(
+    "pub let t = [1, 2]\n",
+    path="t.json.mbt",
+    expected_name="t",
+  )
+  // 标量自由值路径保留（Tuple 走 J3001 白名单外——#32-19 锚在案）
+  let _ = @src.build_source(
+    "pub let t = 1\n",
+    path="t.json.mbt",
+    expected_name="t",
+  )
+}

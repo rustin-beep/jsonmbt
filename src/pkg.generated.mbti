@@ -77,6 +77,8 @@ pub(all) enum JCode {
   JBigNum
   JPrecisionMix
   JDupFieldDecl
+  JNoTypeHeader
+  JOverwriteGuard
   JTaggedEnumHint
   JNeverHint
   JDrift

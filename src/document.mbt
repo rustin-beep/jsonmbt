@@ -246,6 +246,26 @@ fn attach_field_aliases(
 }
 
 ///|
+/// J2010 形态判定（#42 案例 A，裁定口径）：顶层值为 **Record 变体**（裸
+/// 花括号对象 / 具名构造 M::{...} 无标注）→ 真——moon [4074]/[4033]（no
+/// record definition）对齐。**Map 字面量（带引号键）与数组/Some 自由值
+/// 保留合法**（既有正样本能力，api_test 锚成体系；moon 侧同形态 [4074]
+/// = 已知有意差集「moon 严于 jsonmbt」，#16「不比 moon 严」的反向不违
+/// 承诺——扩展拒收另议留痕 issue）。标量/Tuple/Constr 可推断为假。
+/// Group(Paren) 递归剥（#25——圆括号不改形态）
+fn expr_needs_header(e : @syntax.Expr) -> Bool {
+  match e {
+    Record(..) => true
+    Group(expr~, group~, ..) =>
+      match group {
+        Paren => expr_needs_header(expr)
+        Brace => false
+      }
+    _ => false
+  }
+}
+
+///|
 fn analyze(
   src : String,
   path~ : String = "",
@@ -377,7 +397,24 @@ fn analyze(
       scan_supported_type(parse_type(t), loc)
       Some(parse_type(t))
     }
-    None => None
+    None => {
+      // J2010（#42 案例 A）：顶层复合字面量无类型标注——moon [4074]
+      // Cannot infer（探针实锚：record/Map/数组/Some 无标注一律红，仅
+      // 标量/Tuple 可推断）——jsonmbt 曾全绿照常产出，真相源在 moon
+      // 编译面是坏的。括号剥（#25）后内层仍是复合形态即命中
+      if expr_needs_header(expr) {
+        raise Diag(
+          code=JNoTypeHeader,
+          loc~,
+          message="top-level binding has no type annotation — moonc cannot infer record/map/array/option literals ([4074])",
+          help=Some(
+            "add `: <Type>` to the binding — the type header is part of the document, not decoration",
+          ),
+          path~,
+        )
+      }
+      None
+    }
   }
   { structs, enums: tyenv.enums, root_expr: expr, root_ty, }
 }
