@@ -1538,15 +1538,32 @@ func caseOverwriteGuard(exe, dir string) error {
 	if g2, _ := os.ReadFile(filepath.Join(dir, "h.json.mbt")); !bytes.Contains(g2, []byte("@generated")) {
 		return fmt.Errorf("#46 --force 后应为机器产物:\n%s", g2)
 	}
-	// ④ 大小写变体 note（手写 Hand.json.mbt 挡住 hand.json 的产物）
+	// ④ 大小写变体（按文件系统本征行为分派，非 GOOS——macOS GOOS=darwin
+	// 但默认 APFS 大小写不敏感）。写 Hand.json.mbt 后 Stat hand.json.mbt
+	// 命中 ⇒ 不敏感 FS：两者是同一文件，手写目标挡住落盘 J5002 rc2 + note；
+	// 未命中 ⇒ 敏感 FS（ubuntu CI）：两者是独立文件，hand.json.mbt 正常
+	// 生成 rc0——反向负锚：探测不得误拒独立文件、Hand.json.mbt 原文不破坏。
 	writeFile(dir, "Hand.json.mbt", hand)
 	writeFile(dir, "hand.json", `{"a":2}`)
-	rc, _, stderr, err = runExe(exe, dir, "import", "hand.json")
-	if err != nil || rc != 2 {
-		return fmt.Errorf("大小写变体场景 rc=%d err=%v stderr=%q", rc, err, stderr)
-	}
-	if !bytes.Contains(stderr, []byte("case-variant")) {
-		return fmt.Errorf("#46 大小写变体应带 note:\n%s", stderr)
+	if _, statErr := os.Stat(filepath.Join(dir, "hand.json.mbt")); statErr == nil {
+		rc, _, stderr, err = runExe(exe, dir, "import", "hand.json")
+		if err != nil || rc != 2 {
+			return fmt.Errorf("大小写变体场景 rc=%d err=%v stderr=%q", rc, err, stderr)
+		}
+		if !bytes.Contains(stderr, []byte("case-variant")) {
+			return fmt.Errorf("#46 大小写变体应带 note:\n%s", stderr)
+		}
+	} else {
+		rc, _, stderr, err = runExe(exe, dir, "import", "hand.json")
+		if err != nil || rc != 0 {
+			return fmt.Errorf("大小写敏感 FS 独立文件应放行 rc=%d err=%v stderr=%q", rc, err, stderr)
+		}
+		if got, _ := os.ReadFile(filepath.Join(dir, "Hand.json.mbt")); !bytes.Contains(got, []byte("pub struct Hand")) {
+			return fmt.Errorf("#46 敏感 FS 上 Hand.json.mbt 被误伤:\n%s", got)
+		}
+		if got, _ := os.ReadFile(filepath.Join(dir, "hand.json.mbt")); !bytes.Contains(got, []byte("@generated")) {
+			return fmt.Errorf("#46 敏感 FS 上 hand.json.mbt 应正常生成:\n%s", got)
+		}
 	}
 	// ⑤ build 默认输出命中源 JSON → 点名字句
 	writeFile(dir, "s.json.mbt", "pub struct S {\n  a : Int32\n}\npub let s : S = S::{ a: 1 }\n")

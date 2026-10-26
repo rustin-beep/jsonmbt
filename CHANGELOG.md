@@ -14,7 +14,7 @@
 
 - **现象**：import 目标已存在时**一律静默覆盖**——手写 .json.mbt（人工审阅命名 / field-alias 注记所在）被无声抹掉；Windows 大小写变体互覆盖；build 默认输出改写源 JSON 无点名提示
 - **修法（方案 c，用户拍板）**：import 落盘闸 `guard_import_overwrite`——目标首行含 `@generated` 标注（机器产物）⇒ 覆盖照旧 + note；**无标注 = 手写 ⇒ 拒 J5002（rc 2，与漂移同「需人裁决」语义段）**+ help 指路 `--force`；新增 import `--force` flag（跳过保护）。附带**大小写变体探测**（落盘前 read_dir 比对，命中即 note）与 **build 默认输出命中已存在文件的点名 note**（CI 再生链路不设拒，只提示）
-- **锚**：层 2 新锚 `overwrite-guard`（机器覆盖 note / 手写拒 rc2 且内容不破坏 / --force 覆盖 / 大小写 note / build 点名五态）——47 → **48**
+- **锚**：层 2 新锚 `overwrite-guard`（机器覆盖 note / 手写拒 rc2 且内容不破坏 / --force 覆盖 / 大小写 note / build 点名五态）——47 → **48**；**发包收尾勘误 2026-10-26**：大小写变体臂按**文件系统本征行为**分派（写 `Hand.json.mbt` 后 `Stat` 探测，非 GOOS 枚举——macOS `darwin` 但默认 APFS 不敏感）——不敏感 FS 断言 J5002 rc2 + note（Windows/macOS），敏感 FS 断言独立文件放行 rc0 + 双文件互不误伤（ubuntu CI，首跑红即红面实证；实现无改动，纯用例平台假设修正）
 
 
 ### Fixed（issue #48：--fill 值面冲突透传内层码——rc1 输入错，摘「generator bug」误导）
