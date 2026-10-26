@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+### Fixed（审阅 86ce9fb：overwrite-guard 大小写臂「不误伤」断言哑弹——判据不互斥，换逐字节比对）
+
+- **现象**（A11 锚判据不互斥，端到端实证）：用例 ④ 敏感 FS 分支以 `contains("pub struct Hand")` 判「Hand.json.mbt 未被误伤」——而 import 产物（stem=hand）派生**同名类型** `pub struct Hand`，判据对手写原文与机器产物**同判**：缺陷真发生（变体文件被机器产物覆盖）时断言照绿。② 臂 `contains` 判据本有牙（h.json 产物派生 `H` ≠ 手写 `Hand`），但同型口径统一升级
+- **修法**：④ 敏感分支 + ② 臂均换 **`bytes.Equal` 逐字节比对**（手写原文在手边——最强判据，同时防任何破坏形态）
+- **证红链**（Windows 原生驱动 + `TEMP` 指向 `//wsl.localhost` 9P 路径 = 敏感 FS 本地复现通道，两层均执行）：探针判据双跑（contains 同判 True / `@generated` 互斥）→ 注入产品突变（误写变体）后 driver **红**（新断言有牙）→ 同一注入 + 86ce9fb 旧断言 **绿**（哑弹坐实）→ 还原后双环境复绿（9P 敏感分支 pass + 常规 48/48）；另实证「本地 driver 全绿 ≠ 敏感分支被执行过」（Go Windows TempDir 不读 TMPDIR——先前 TMPDIR 重定向静默无效，临时目录一直落在 NTFS）
+- **勘误**：86ce9fb 锚段所记「敏感 FS 断言……双文件互不误伤」当时实为哑弹断言（不提供该保障）；CI 矩阵已天然双语义覆盖（ubuntu 敏感分支每跑必执行——处置后该保障才真实存在）
+
+### Fixed（issue #59：J4011 分布计数按键集聚合——同键集不同深度组不再双列）### Fixed（issue #59：J4011 分布计数按键集聚合——同键集不同深度组不再双列）
+
+- **现象**（vscode `.github/classifier.json` 真实样本，313 样本）：`5 distinct key sets ... ×308 { assign }; ... ×1 { accuracy }; ×1 { assign }`——`{ assign }` 双列，实际 4 个键集。根因：D-15 把**路径深度**放进分组键（键集×深度），`keyset_drift_diag` 退化面兜底（跨路径合流撞形、无单容器漂移时的全量平铺）**按组**列行——同键集不同深度是两个组（触发形态：Map 逃生门值对象 + 键含 `.` 的路径 `$.labels.vscode.dev` 深度+1）
+- **修法**：兜底平铺按**键集签名聚合**（合并不同深度的同键集组计数，键序取首见组）——计数自述 "distinct key sets" 恢复为真值；按路径分组的 section 分支不受影响（同路径同键集必同组，本就不双列）
+- **锚**：层 1 新锚先红（`4 distinct key sets` 实际 3 键集实证）后绿——152 → **153**；真实 classifier.json 复核 `×309 { assign }` 单列、计数 5→4；层 2 48/48 零随迁
+
+### Fixed（issue #57/#60/#56/#58：外部反馈第三批文档与文案四处）
+
+- **#57 doctor 语义限定**：`✅ check/build — ok` → `✅ check/build — ok (jsonmbt-local validation; MoonBit compile verdict: run 'moon check')`——与 `❌ struct names (moon build would fail)` 并列时裸 "ok" 会被读成「能编译」；driver 锚同步为全文锚
+- **#60 Double 透传措辞限定**：README 数字降级契约 + manual 数字节补「**指数记法除外**——MoonBit 字面量必须带小数点，`1e10` → `1.0e10`、`1e-3` → `1.0e-3`（数值不变、拼写微调，migrate 归 VALUE-EQ 档）」——文档过诺勘误（工具自洽、措辞不符）
+- **#56 D-5 建模改形状补记**：键集漂移两条人工建模路线（enum tag 展开 / Option 补 null）**均改变 JSON 形状**（多出 `"case"` 键 / 缺省键补 `null`）——README importer 节 + PLAN §6 已知面新条目（真实语料 24% 无保值迁移路径，保值 = 维持 JSON 形态；语言面「字段可缺省」需 §8 评审、无 ≥2 下游案例不启动）
+- **#58 接入坑表补 moon.pkg.json**：旧格式 `moon.pkg.json` 被 moon 当包声明——外部仓语料拷进自己仓即**根 `moon build` 直接红**（症状离真因远）；正解 = 先 `moon fmt` 迁移或隔离在嵌套 module；坑表 9 → 10 条（README 两处计数同步）
+
 ### Fixed（issue #42 案例 A / D-16：顶层 record 字面量缺类型标注 J2010——moon [4074] 对齐，Map/数组自由值保留）
 
 - **现象**（用户 21 例形态普查 + 本仓探针双实证）：`pub let m = { a: 1 }`（裸 record）、`pub let m = M::{ a: 1 }`（具名构造无标注）——jsonmbt **rc=0 全绿且照常产出**，moon 侧 `[4074]` Cannot infer + `[4033]` no record definition——真相源在 moon 编译面是坏的，CI 只看 jsonmbt 绿即被掩盖

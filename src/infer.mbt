@@ -930,15 +930,34 @@ fn keyset_drift_diag(
   let dist = if sections.length() > 0 {
     sections.join(" | ")
   } else {
-    // 退化面（跨路径合流撞形，无同容器漂移）：全量平铺兜底——如实报
-    let rows : Array[String] = []
-    let mut total = 0
+    // 退化面（跨路径合流撞形，无同容器漂移）：全量平铺兜底——如实报。
+    // #59：平铺按**键集**聚合（合并不同深度的同键集组计数）——分组键含
+    // 深度维度（D-15），同键集不同深度是两个组，按组平铺会双列且计数
+    // 自述虚高（vscode classifier.json：313 样本报 "5 distinct key sets"
+    // 实为 4）；键序取首见组（聚合面键集相同，序差不改变集合语义）
+    let counts : Map[String, Int32] = Map([])
+    let key_order : Array[String] = [] // 键集签名（首见序）
+    let label_of : Map[String, String] = Map([]) // 签名 → 首见键序文本
     for sig in ctx.group_order {
       let g = ctx.groups[sig]
       if g.count > 0 {
-        rows.push("×\{g.count} { \{g.keys.join(", ")} }")
-        total = total + g.count
+        let ks = signature_of_keys(g.keys)
+        match counts.get(ks) {
+          Some(n) => counts[ks] = n + g.count
+          None => {
+            counts[ks] = g.count
+            key_order.push(ks)
+            label_of[ks] = g.keys.join(", ")
+          }
+        }
       }
+    }
+    let rows : Array[String] = []
+    let mut total = 0
+    for ks in key_order {
+      let n = counts[ks]
+      rows.push("×\{n} { \{label_of[ks]} }")
+      total = total + n
     }
     let sorted = rows.copy()
     sorted.sort_by(fn(a, b) { cmp_rows(b, a) })

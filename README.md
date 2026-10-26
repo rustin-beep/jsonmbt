@@ -41,7 +41,7 @@ $ jsonmbt build examples/server.json.mbt
 - **类型即 schema，零新语法**：`.json.mbt` 是合法 MoonBit 源文件——`moon check` 编译期验证字段类型与必填性，错误信息 IDE 级（行列指向）；重复键结构性不可能；注释与尾逗号天然合法。`moon fmt` 直接统一格式（import 产物即 fmt 不动点——[#18](https://github.com/rustin-beep/jsonmbt/issues/18)：宽度驱动渲染对齐 fmt 规范形，层 2 金门常驻断言「产物过 fmt 零 diff」）。
 - **确定性降级**：同一输入永远得到逐字节相同的输出。build 校验先行，失败零产物。**字节口径**（[#30](https://github.com/rustin-beep/jsonmbt/issues/30)）：`--pretty` 的语义锚是 **Go `json.Encoder`**（数组恒逐元素展开，含单元素）——BYTE-EQ 只承诺「机器生成且格式策略一致」的源，人写/prettier 源承诺**值层面等价**（`migrate` 的 LAYOUT-EQ/VALUE-EQ 档）；「逐字节还原人写源」架构上不可达（`.json.mbt` 是类型化重写非保格式载体，布局信息 import 时已丢）。
 - **Map 键序契约**（[#19](https://github.com/rustin-beep/jsonmbt/issues/19)）：build 的 Map 输出键序 = `.json.mbt` 字面量的**源文本序**（不排序、非字典序——D-11 ④）。程序生成侧必须以确定性序渲染（原文序/排序序皆可），**禁止依赖运行时 map 遍历序**（Go/Py 的 range 序随机——同数据两次生成产物不同，确定性破功）。
-- **数字降级契约**（[#17](https://github.com/rustin-beep/jsonmbt/issues/17)）：整数族（`Int`/`Int64`）走**解析值归一**——`-0` → `0`、`0x10` → `16`（进制归一）、Int64 全精度文本保留；`Double` 保**源拼写透传**（`1.50` 原样、不归一为 `1.5`——避免解析-再格式化的精度伪影）。含义：数字拼写属源文本的一部分——按字节指纹锚定的下游请保持拼写稳定（机器生成源天然满足）。
+- **数字降级契约**（[#17](https://github.com/rustin-beep/jsonmbt/issues/17)）：整数族（`Int`/`Int64`）走**解析值归一**——`-0` → `0`、`0x10` → `16`（进制归一）、Int64 全精度文本保留；`Double` 保**源拼写透传**（`1.50` 原样、不归一为 `1.5`——避免解析-再格式化的精度伪影；**指数记法除外**：MoonBit 字面量必须带小数点，`1e10` → `1.0e10`——数值不变、拼写微调，`migrate` 归 VALUE-EQ 档）。含义：数字拼写属源文本的一部分——按字节指纹锚定的下游请保持拼写稳定（机器生成源天然满足）。
 - **字符串转义契约**（[#16](https://github.com/rustin-beep/jsonmbt/issues/16)）：`.json.mbt` 侧接受 MoonBit 词法接受的一切（`\'  \"  \\  \/  \n  \r  \t  \b  \f  \0  \xHH  \u{...}  \uXXXX`，含 `\uD8xx\uDCxx` 代理对合成——moon 实测全接受）；降级输出用最小转义集（控制符/引号/反斜杠）+ **非 ASCII 裸 UTF-8**（无 `\uXXXX` 噪音）——同值异形输入产同一输出规范形。
 - **`Option` 即可空**：`Int32?` ↔ JSON `null`，可空性写进类型头，读的人不用猜。
 - **工具链零维护税**：fmt / check / IDE 支持全部继承 moon 全家桶，jsonmbt 只做「校验 + 降级」这一件事。
@@ -92,7 +92,7 @@ jsonmbt: error [J3004] examples/server.json.mbt:9:9 expects Int32, got String li
 
 ## importer（已落地）
 
-`jsonmbt import x.json` 将从 JSON 反推 `struct` 头 + 直译值，生成合法 `.json.mbt`——存量 JSON 资产的迁移入口。**输入默认吃 JSONC**（注释 / 尾逗号 / 文件首 BOM 在 pre-pass 等长空格消解——tsconfig / eslintrc / settings.json 类真实文件直接进；`--input json` 退回裸 RFC 8259，D-9 判据：只收字符层可消解特性，单引号串/无引号 key/`NaN` 等扩值域形态永拒）。**含换行的长文案产 `#|` 多行**（`--fill` 回写同理——`#|` 手写真源经 build→改值→回写的教师循环不磨损写作形态）。真实数据形态的确定性出路：**保留字字段名**（`where`/`extend` 等 moon 关键字全量口径——硬/保留分级见 [PLAN §8 D-14](docs/PLAN.md)）自动改名 + `field-alias` 注记往返还原；**键集漂移**数组按 D-5 手工建模 enum；**键域强校验**（有限键集要「拼错红」）用**带参枚举数组**——`Map[AlgoE, String]` 的裸构造器键位 moon 本尊即 `[4014]` 拒（语言层边界；带参枚举数组拼错变体写时红，降级 `[{"case","value"}]`）；批量场景用 **`jsonmbt migrate`** 三榜侦察（能直进 CI 对账的 / 仅风格差的 / 拒收带原因的）先探后迁。P0 探针已用合成矩阵与真实数据完成实证（含 2,469 张冻结档案压测，未判形态全部落在已知逃生门内，详见 [PLAN §9](docs/PLAN.md)）。
+`jsonmbt import x.json` 将从 JSON 反推 `struct` 头 + 直译值，生成合法 `.json.mbt`——存量 JSON 资产的迁移入口。**输入默认吃 JSONC**（注释 / 尾逗号 / 文件首 BOM 在 pre-pass 等长空格消解——tsconfig / eslintrc / settings.json 类真实文件直接进；`--input json` 退回裸 RFC 8259，D-9 判据：只收字符层可消解特性，单引号串/无引号 key/`NaN` 等扩值域形态永拒）。**含换行的长文案产 `#|` 多行**（`--fill` 回写同理——`#|` 手写真源经 build→改值→回写的教师循环不磨损写作形态）。真实数据形态的确定性出路：**保留字字段名**（`where`/`extend` 等 moon 关键字全量口径——硬/保留分级见 [PLAN §8 D-14](docs/PLAN.md)）自动改名 + `field-alias` 注记往返还原；**键集漂移**数组按 D-5 手工建模 enum（tag 键展开）或 `Option` 字段（缺键补 null）——**两条路线都改变 JSON 形状**（多出 `"case"` tag 键 / 缺省键补 `null`），字节或形状保值的场景维持 JSON 形态不迁（[PLAN §6 已知面](docs/PLAN.md)）；**键域强校验**（有限键集要「拼错红」）用**带参枚举数组**——`Map[AlgoE, String]` 的裸构造器键位 moon 本尊即 `[4014]` 拒（语言层边界；带参枚举数组拼错变体写时红，降级 `[{"case","value"}]`）；批量场景用 **`jsonmbt migrate`** 三榜侦察（能直进 CI 对账的 / 仅风格差的 / 拒收带原因的）先探后迁。P0 探针已用合成矩阵与真实数据完成实证（含 2,469 张冻结档案压测，未判形态全部落在已知逃生门内，详见 [PLAN §9](docs/PLAN.md)）。
 
 ## 在你的仓里接入（moon 静态门禁）
 
@@ -111,7 +111,7 @@ moon fmt data && moon check          # 3. 归一 + 检查（此步会真的拦�
 
 多模块仓在仓根加 `moon.work`，一条 `moon check` 覆盖全部；CI 里 `moon check` 放在
 `jsonmbt build` **之前**。完整接法、CI 接线片段、注入测试法（怎么证明门禁真的会红）、
-以及 9 条实测坑表见 **[docs/INTEGRATION.md](docs/INTEGRATION.md)**。
+以及 10 条实测坑表见 **[docs/INTEGRATION.md](docs/INTEGRATION.md)**。
 
 **exe 获取（推荐：clone 源码自行构建）**：
 
@@ -155,7 +155,7 @@ MOON_CC=clang moon build --target native --release
 
 ## 文档
 
-- [docs/INTEGRATION.md](docs/INTEGRATION.md) — **接入指引**：在你的仓里把 `.json.mbt` 接上 moon 静态门禁（三个前提 / `moon.work` 多模块 / CI 接线 / 注入测试法 / 9 条实测坑表）
+- [docs/INTEGRATION.md](docs/INTEGRATION.md) — **接入指引**：在你的仓里把 `.json.mbt` 接上 moon 静态门禁（三个前提 / `moon.work` 多模块 / CI 接线 / 注入测试法 / 10 条实测坑表）
 - [docs/PLAN.md](docs/PLAN.md) — 计划权威：里程碑、决策记录（D 系）、探针存档
 - [AGENTS.md](AGENTS.md) — 贡献纪律（红线：红→绿、诚实记录、求值分级冻结）
 - [assets/](assets/) — 视觉资产（logo / banner，SVG 为源）

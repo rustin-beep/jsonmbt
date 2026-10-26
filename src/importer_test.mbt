@@ -679,6 +679,25 @@ test "import : J4010 键集分布按容器路径分组（#14-3）" {
 }
 
 ///|
+test "import : J4011 分布计数按键集聚合——同键集不同深度组不再双列（#59）" {
+  // 兜底面（跨路径合流撞形，无单容器漂移）：labels 含连字符键走 Map 逃生门，
+  // 值对象 {assign} 因键 "g.h" 含点落在深度 3、其余深度 2 → 同键集两组；
+  // 旧实现按组（键集×深度）平铺 → "{ assign }" 双列、计数自述 "4 distinct
+  // key sets"（实际 3 个键集）——vscode classifier.json 真实形态（313 样本报 5）
+  let d = try {
+    let _ = do_import(
+      "{\"labels\":{\"a-b\":{\"assign\":[\"x\"]},\"c-d\":{\"assign\":[\"y\"]},\"e-f\":{\"assign\":[\"z\"],\"accuracy\":2},\"g.h\":{\"assign\":[\"w\"]}}}",
+    )
+    "SUCCEEDED"
+  } catch {
+    e => if e is @src.Diag(..) { e.render() } else { abort("non-Diag") }
+  }
+  inspect(d.contains("[J4011]"), content="true")
+  inspect(d.contains("3 distinct key sets in 5 samples"), content="true")
+  inspect(d.contains("×3 { assign }"), content="true")
+}
+
+///|
 test "build : field-alias 注记的解析与校验（J3009 家族，#13）" {
   // 手写文件带注记：build 侧应用逆映射（手写保留字键对象首次可表达）
   let doc =

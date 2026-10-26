@@ -452,7 +452,11 @@ fn run_doctor(root_arg : String) -> Int32 {
           }
         }
         if check_ok {
-          print_out("  ✅ check/build — ok")
+          // #57：点明「自家校验 ≠ MoonBit 编译判决」——与 ❌ struct names 的
+          // "(moon build would fail)" 并列时，裸 "ok" 会被读成「能编译」
+          print_out(
+            "  ✅ check/build — ok (jsonmbt-local validation; MoonBit compile verdict: run 'moon check')",
+          )
           src_ok = true
           // #24-2b：全部非空 #| 行统一前导空格 → 排版信号 note（hint 级，
           // 不计 warned/blocked——接线闸不掺内容口味）。空格入值是 moon

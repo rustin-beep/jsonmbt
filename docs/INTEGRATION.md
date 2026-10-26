@@ -198,6 +198,7 @@ cp /tmp/bak data/config.json.mbt
 | 注入用同类型改数值 | 不红，且**这是正确的** | 跨类型注入；业务语义交给下游门禁 |
 | 只在文件尾追加 `pub let` 验证 | 不红——**两个 `pub let` 在 MoonBit 语法上合法**（moon 不知单文档基数） | 注入到字段声明/值上 |
 | `moon test` 门禁没跑 | 缺 registry 索引时依赖解析阶段就红 | CI 先 `moon update` |
+| 仓里混入旧格式 `moon.pkg.json` | **根 `moon build` 直接红**：`is no longer supported. Run moon fmt to migrate`——moon 把它当包声明（外部仓语料/生态材料拷进来即触发，MoonBit 真实仓普遍还是旧格式） | 先 `moon fmt` 迁移该文件，或把语料树隔离在**嵌套 module**（自带 `moon.mod` 的目录）里——与「`tmp/` 放 `moon.pkg` 即进编译面」同族 |
 
 ## moon 的行为基线（2026-09 工具链实测）
 

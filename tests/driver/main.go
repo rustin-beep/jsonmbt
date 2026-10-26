@@ -134,8 +134,8 @@ func caseReservedStemChain(exe, dir string) error {
 	if err != nil || rc != 0 {
 		return fmt.Errorf("doctor rc=%d（保留字 stem 不应挡住）\n%s err=%v", rc, dout, err)
 	}
-	if !bytes.Contains(dout, []byte("✅ check/build — ok")) {
-		return fmt.Errorf("doctor 的 check/build 项应全绿（曾误诊 J2003）\n%s", dout)
+	if !bytes.Contains(dout, []byte("✅ check/build — ok (jsonmbt-local validation; MoonBit compile verdict: run 'moon check')")) {
+		return fmt.Errorf("doctor 的 check/build 项应全绿且带 #57 语义限定\n%s", dout)
 	}
 	// 常规 stem 回归：D-7 对非保留字恒等（错名仍拒）
 	writeFile(dir, "plain.json.mbt", "pub let other = 1\n")
@@ -1527,9 +1527,11 @@ func caseOverwriteGuard(exe, dir string) error {
 	if err != nil || rc != 2 || !bytes.Contains(stderr, []byte("[J5002]")) {
 		return fmt.Errorf("手写目标应 J5002 rc2: rc=%d stderr=%q err=%v", rc, stderr, err)
 	}
+	// 逐字节判据（A11 同族升级）：片段 contains 在 stem 撞名时退化为
+	// 同判（见④），此处手边有原文——直接字节级比对
 	got, _ := os.ReadFile(filepath.Join(dir, "h.json.mbt"))
-	if !bytes.Contains(got, []byte("pub struct Hand")) {
-		return fmt.Errorf("#46 手写文件被破坏:\n%s", got)
+	if !bytes.Equal(got, []byte(hand)) {
+		return fmt.Errorf("#46 手写文件被破坏（应逐字节等于原文）:\n%s", got)
 	}
 	// ③ --force 显式覆盖
 	if rc, _, _, err = runExe(exe, dir, "import", "h.json", "--force"); err != nil || rc != 0 {
@@ -1558,8 +1560,12 @@ func caseOverwriteGuard(exe, dir string) error {
 		if err != nil || rc != 0 {
 			return fmt.Errorf("大小写敏感 FS 独立文件应放行 rc=%d err=%v stderr=%q", rc, err, stderr)
 		}
-		if got, _ := os.ReadFile(filepath.Join(dir, "Hand.json.mbt")); !bytes.Contains(got, []byte("pub struct Hand")) {
-			return fmt.Errorf("#46 敏感 FS 上 Hand.json.mbt 被误伤:\n%s", got)
+		// 判据互斥（A11 审阅哑弹处置）：contains("pub struct Hand") 对
+		// 手写原文与机器产物**同判**（import stem=hand 派生同名类型
+		// Hand）——被机器产物覆盖也照绿；换逐字节比对（原文在手边，
+		// 同时防任何破坏形态）
+		if got, _ := os.ReadFile(filepath.Join(dir, "Hand.json.mbt")); !bytes.Equal(got, []byte(hand)) {
+			return fmt.Errorf("#46 敏感 FS 上 Hand.json.mbt 被误伤（应逐字节等于手写原文）:\n%s", got)
 		}
 		if got, _ := os.ReadFile(filepath.Join(dir, "hand.json.mbt")); !bytes.Contains(got, []byte("@generated")) {
 			return fmt.Errorf("#46 敏感 FS 上 hand.json.mbt 应正常生成:\n%s", got)
