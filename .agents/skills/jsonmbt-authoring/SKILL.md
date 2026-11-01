@@ -15,7 +15,7 @@ description: ".json.mbt 类型化 JSON 数据文件的手写与机器生成指�
 
 ```bash
 jsonmbt import  x.json -o x.json.mbt      # 一次性迁移：JSON → .mbt（形状推断）
-jsonmbt import  x.json --check            # 幂等闸：重导入必须逐字节一致（rc=2 漂移）
+jsonmbt import  x.json --check            # 幂等闸：数据面同步（值语义等价——moon fmt 改写后照绿；rc=2 源变/篡改）
 jsonmbt import  x.json --type-name-map m.json  # 机器派生名 → 语义名（键=首次产物里的派生名，含前缀化形态）
 jsonmbt import  x.json --strict           # 空容器严格档：启发无解时如旧 J4001/J4002 拒（默认 Never 占位）
 jsonmbt import  x.json --fill x.json.mbt [--check]  # 按已有产物的类型头重算值体（头逐字节保留）；--check=值体同步闸（rc=2 源变）
@@ -37,7 +37,8 @@ rc 语义：`0` ok / `1` 输入错 / `2` 漂移（--check）/ `4` 用法错。CI
 1e. **整数规范拼写 `Int32`**（#34/D-13）：moon fmt（0.1.20261012+）把类型位置 `Int` 归一为 `Int32`（`UInt`→`UInt32` 同理）——import 产物与 fmt 不动点跟此形；手写 `Int` 是同型别名、check/build 照常绿（存量零破坏），新文件建议直接写 `Int32`；
 1a. **保留字字段名**（#13/#38）：JSON 键是 moon 关键字（**发射端口径 = 58 硬关键字 + 21 保留词全量**，`src/moon_facts.mbt` 单源表——`where`/`type`/`extend`/`var`/`module`…）时 import 自动改名（`where_`）并在产物头发 `// jsonmbt: field-alias Struct.label = "原键"` 注记，build/check 按注记还原 JSON 键；**手写文件也可用该注记**表达保留字键对象（注记行文法错/指向不存在的 struct 或字段/恒等注记 = J3009 fail loud）；**手写字段名直接写 moon 硬关键字（`extend : String`）= J2008 拒**（moonc 下必 Parse error，jsonmbt check 对齐分级拒；`unit`/`when`/`backed` 不是 moon 关键字、直写合法）；保留词字段名（`module` 等 21 词）check 放行（moon 仅 `[0035]` 警告级合法），import 产物照旧改名（生成器零警告形态）；
 1b. **字符串转义契约**（#16）：`.json.mbt` 侧接受 moon 词法接受的一切（`\' \" \\ \/ \n \r \t \b \f \0 \xHH \u{...} \uXXXX`，含代理对合成；孤立代理拒）；降级输出 = 最小转义集 + 非 ASCII 裸 UTF-8（同值异形输入产同一规范形）；
-1c. **数字降级契约**（#17）：整数族解析值归一（`-0`→`0`、`0x10`→`16`）；`Double` 源拼写透传（`1.50` 原样——避免精度伪影）；Int64 全精度文本保留；
+1c. **输入必须合法 UTF-8**（#51）：所有入口（import/fill/migrate/build/check、file 与 stdin）解码前做字节级校验——非法字节（`0x80` 孤立续字节/`0xFE`/overlong/surrogate 编码等）一律 **J1004 拒收**点名字节与偏移（rc=1），**绝不静默替换或丢弃**（曾实测：值位 `0x80` 被丢成空串、`fe fe ff ff` 崩进程——「解压对值无损」契约红线）；合法多字节（CJK/emoji）零误伤；
+1f. **数字降级契约**（#17）：整数族解析值归一（`-0`→`0`、`0x10`→`16`）；`Double` 源拼写透传（`1.50` 原样——避免精度伪影）；Int64 全精度文本保留；
 1d. **空容器占位**（#14-2a）：import 遇推断无线索的空数组/空对象 → `Array[<Stem>Never]` / `Map[String, <Stem>Never]`（产物自带 `pub enum <Stem>Never {}`——零构造器 = 免费护栏，元素位写值 moon `[4014]` 红）；**底型名逐文件唯一（#36）**：`x.json` → `XNever`，同目录多文件各发一份不再重复声明（moon `[4051]`），文件仍自持；`--strict` 恢复旧拒绝（J4001/J4002 只在 strict 档出现）；手写空容器字段直接声明真元素类型（`Array[String]` + `[]`）即无此面；
 2. **一个文件一个顶层文档**：`foo.json.mbt` 内有且只有一个 `pub let foo : ...`——**绑定名 = sanitize_stem(文件 stem)**（常规 stem 恒等；**硬关键字**/数字开头文件名确定性加 `x_` 前缀：`type.json`/`var.json` 产物绑定 `x_type`/`x_var`，import/build/check/doctor 四路同口径，#31；口径 = 58 硬关键字——保留词 stem（`module.json`）不前缀，moon 仅警告级合法，#38/D-14②）；
 3. **键集不齐的数组用带参 enum**（D-5）：每种键集一个 struct，`enum Case { A(Ax); B(Bx) }`，字面量 `A(Ax::{ field: value })`。降级投影 = tag 对象展开（payload 进顶层 + `"case"` tag 键）；**payload 字段禁止叫 `case`**（J3008 显式拒）；**payload 形参也可以是 enum 名**（`enum Field { Named(Col) }` + `Named(X)`——标量 payload 走 `{"case":…,"value":…}` 形态）；已知面：struct payload 含 `value` 字段展平后与标量 payload 的 `value` 键同形（J3008 只防 `case` 不防 `value`——实际可由 case 值区分，登记不修）；
@@ -84,7 +85,7 @@ jsonmbt import x.json --fill x.json.mbt
 2. **Map 键序由 .mbt 文本序决定**：从 Go map range 直接输出会翻车（遍历序随机）——必须原文顺序抽取或显式排序，否则确定性破功；
 3. **round-trip 是链路语义闸，必跑——但「round-trip 绿 ≠ 数据语义正确」**：它防的是**链路引入的漂移**（emitter 装错变体、编解码不对称、归一化丢信息——build 再生对拍即红）；**不防**：①手写源头错（靠 freeze diff 人审）②值超域（99999 稳定往返 99999，绿——需消费侧 guard 或值域校验）。另一个第二用途：emitter 形态版本升级时，round-trip 可证「纯形态重构、语义零变化」；
 4. **含 `\n` 的长文案产 `#|` 多行**（#26 起，#18 后为 fmt 不动点形态）：值位括号包裹、`#|` 行**随嵌套缩进**（字段位 +2）、`#|` 后无前导空格（空格入值——moon 语义）；单行值保持转义形态、含 `\r` 的值走转义单行；
-5. **fmt 不动点**（#18 重写，2026-10-10）：`jsonmbt import` 产物**即 moon fmt 不动点**（宽度驱动渲染：整行 ≤84 record 单行尾逗号形/数组 ≤80/标量填满式/`Some(` 折/`#|` 随嵌套缩进/`///|` 补齐）——接 moon 门禁**无需再 fmt**；`--fmt` 旗标保留但为 **no-op**（既有脚本零破坏，输出 hint）。层 2 金门 `fmt-fixed-point` 常驻断言零 diff——**moon 工具链升级若漂移 fmt 形态，金门即红**（漂移显性化：此时勿手 fmt 掩盖，应报上游跟进渲染器）。**程序 emitter（自己产 .mbt 的下游）**：对齐 jsonmbt 形态最稳；要跑 fmt 用 `cd <目标项目> && moon fmt`——`moon fmt <path>` 把 path 当包过滤 pattern，项目外路径**静默跳过且 rc=0**（陷阱 #45）；fmt 形态与手写并存时以 moon fmt 为准归一。
+5. **fmt 形态**（#18 重写 2026-10-10；**#52 勘误 2026-11-01**）：`jsonmbt import` 产物为宽度驱动渲染形（整行 ≤84 record 单行尾逗号形/数组 ≤80/标量填满式/`Some(` 折/`#|` 随嵌套缩进/`///|` 补齐），**常见形态与 moon fmt 对齐**（层 2 金门 fmt-fixed-point 常驻对齐断言——moon 工具链升级若漂移 fmt 形态，金门即红，勿手 fmt 掩盖应报上游）；**真实长数组形态（元素 ≥2/3 × 长串）仍会被 moon fmt 改写**（#52——两套折行算法非单调差异，真实语料 6.9%）——产物**不承诺**全形态 fmt 不动点：想统一成 fmt 形就跑 `moon fmt`，`import --check` 比对数据面，改写后照绿、两种排版共存不冲突；`--fmt` 旗标为 **no-op**（既有脚本零破坏，输出 hint）。层 2 金门 `fmt-fixed-point` 常驻断言零 diff——**moon 工具链升级若漂移 fmt 形态，金门即红**（漂移显性化：此时勿手 fmt 掩盖，应报上游跟进渲染器）。**程序 emitter（自己产 .mbt 的下游）**：对齐 jsonmbt 形态最稳；要跑 fmt 用 `cd <目标项目> && moon fmt`——`moon fmt <path>` 把 path 当包过滤 pattern，项目外路径**静默跳过且 rc=0**（陷阱 #45）；fmt 形态与手写并存时以 moon fmt 为准归一。
 
 ## Agent 协作纪律（下游仓收录时抄这段）
 

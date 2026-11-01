@@ -6,7 +6,7 @@ import {
 }
 
 // Values
-pub fn build_source(String, path? : String, expected_name? : String, pretty? : Bool, indent? : Int?) -> String raise Diag
+pub fn build_source(String, path? : String, expected_name? : String, pretty? : Bool, indent? : Int32?) -> String raise Diag
 
 pub fn build_value(String, path? : String, expected_name? : String) -> Json raise Diag
 
@@ -30,6 +30,8 @@ pub fn sanitize_stem(String) -> String
 
 pub fn strip_jsonc(String) -> String
 
+pub fn validate_utf8(Bytes, path? : String) -> Unit raise Diag
+
 // Errors
 pub(all) suberror Diag {
   Diag(code~ : JCode, loc~ : @basic.Location, message~ : String, help~ : String?, path~ : String)
@@ -50,6 +52,7 @@ pub(all) enum JCode {
   JSyntax
   JJsonSyntax
   JDupKey
+  JInvalidUtf8
   JBadNameMap
   JNoDoc
   JMultiDoc
@@ -83,7 +86,7 @@ pub(all) enum JCode {
   JNeverHint
   JDrift
 }
-pub fn JCode::exit_code(Self) -> Int
+pub fn JCode::exit_code(Self) -> Int32
 pub fn JCode::num(Self) -> String
 
 // Type aliases

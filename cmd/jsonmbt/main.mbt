@@ -162,8 +162,14 @@ fn filepath_dir(path : String) -> String {
 /// --type-name-map 文件 → 派生名→语义名映射（#6-4）。形态校验：顶层对象、
 /// 键值全 String；坏 JSON → J1002、形态错 → J1010（与 infer 侧同码族）
 fn load_type_name_map(path : String) -> Map[String, String] raise @src.Diag {
-  let text = @fs.read_file_to_string(path) catch {
-    _ => raise io_diag("cannot read type-name-map '\{path}'")
+  // #51：同 read_input 纪律——J1004 原样透传（点名字节），IO 错点名 type-name-map
+  let text = read_text_validated(path) catch {
+    e =>
+      if e is @src.Diag(code=@src.JInvalidUtf8, ..) {
+        raise e
+      } else {
+        raise io_diag("cannot read type-name-map '\{path}'")
+      }
   }
   // 与 import 同链（含 JSONC 容忍——映射表可带注释说明各键用途）
   let root = @src.json_parse(@src.strip_jsonc(text), fname=path) catch {
@@ -310,10 +316,19 @@ fn run_import(
     )
   }
   if check {
-    // 幂等闸（纪律 11）：重算产物与磁盘比对（行尾归一）；漂移 rc 2（D-10）
+    // 幂等闸（纪律 11）：漂移 rc 2（D-10）。#52：闸语义 = **数据面同步**
+    //（值面等价），非排版规范形——moon fmt 只改排版不改数据，README 流程
+    //（import → moon fmt → import --check）曾自相矛盾：长数组形态产物非
+    // fmt 不动点（真实语料 6.9%）→ J5001 假红。排版对齐由层 2
+    // fmt-fixed-point 金门另守。快路径先行（字节等零开销——多数路径不付
+    // parse 代价），字节不等 → 值面等价兜底（盘面产物非法 = 漂移）
     let existing = Some(@fs.read_file_to_string(target)) catch { _ => None }
+    // D-7 绑定名参与校验：盘面产物的绑定名被改（= stem 断链）也是漂移
+    let expected_binding : String? = Some(@src.sanitize_stem(stem))
     let up_to_date = match existing {
-      Some(disk) => normalize_eol(disk) == normalize_eol(outcome.content)
+      Some(disk) =>
+        normalize_eol(disk) == normalize_eol(outcome.content) ||
+        value_plane_equal(disk, outcome.content, target, expected_binding)
       None => false
     }
     if up_to_date {
@@ -351,9 +366,11 @@ fn run_import(
     }
     return 0
   }
-  // #18：import 产物已是 fmt 不动点（宽度驱动渲染 + ///| + 尾逗号规范形
-  // ——层 2 金门 fmt-fixed-point 常驻断言），接 moon 门禁无需再 fmt——
-  // 旧 hint（"not fmt-stable yet"）作废撤销
+  // #18 宽度驱动渲染（///| + 尾逗号规范形）；#52 勘误：产物在短数组/
+  // record 形态上与 moon fmt 对齐（层 2 fmt-fixed-point 金门守），但真实
+  // 长数组形态 6.9% 非不动点（两套折行算法非单调差异）——排版承诺收缩为
+  // 「金门样本面对齐」，数据面同步承诺由 --check 值面等价承担（fmt 改写
+  // 后闸仍绿）
   if dash_out {
     write_product_stdout(outcome.content)
     return 0
@@ -365,11 +382,13 @@ fn run_import(
     e => if e is @src.Diag(..) { return print_diag_exit(e) } else { return 4 }
   }
   if fmt {
-    // #18：--fmt 退化为 no-op 保险（产物即不动点，无需 spawn moon fmt；
-    // 保留旗标 = 既有脚本零破坏）。moon 升级致 fmt 形态漂移时金门会红，
-    // 此处不再吞掉差异——漂移显性化后由本仓跟进渲染器
+    // #18：--fmt 退化为 no-op 保险（保留旗标 = 既有脚本零破坏）。
+    // #52 勘误：产物**不再承诺** moon fmt 不动点（真实长数组形态 6.9%
+    // 非不动点——两套折行算法非单调差异，见 issue 表格）；产物保持 jsonmbt
+    // 规范形，要 fmt 规范形请直接跑 moon fmt——--check 比对数据面（值面
+    // 等价），fmt 改写后闸仍绿，两种排版共存不再自相矛盾
     write_stderr(
-      "jsonmbt: hint: --fmt is a no-op — import output is already at the moon fmt fixed point (#18)",
+      "jsonmbt: hint: --fmt is a no-op — import output keeps jsonmbt's canonical layout; run moon fmt yourself if you prefer fmt-canonical form (--check compares data, not layout — #52)",
     )
   }
   0
@@ -431,14 +450,63 @@ fn stem_of(path : String) -> String? {
 }
 
 ///|
+/// #51：输入统一走**字节→校验→解码**——MoonBit 解码对非法 UTF-8 静默
+/// 替换/丢弃/panic（0x80 值位实测丢成空串、fe fe ff ff 直接崩进程），
+/// 且损坏烙进 String 后下游全闸假绿。J1004 在解码前 fail loud 点名字节；
+/// 键位/值位/任意文件类型（.json/.jsonc/.json.mbt/映射表）同口径。
 fn read_input(path : String) -> String raise @src.Diag {
+  let bytes = read_input_bytes(path)
+  @src.validate_utf8(
+    bytes,
+    path=if path == "-" { "<stdin>" } else { path },
+  )
+  @unicode.to_utf8_string(bytes)
+}
+
+///|
+fn read_input_bytes(path : String) -> Bytes raise @src.Diag {
   if path == "-" {
-    @unicode.to_utf8_string(jsonmbt_read_stdin())
+    jsonmbt_read_stdin()
   } else {
-    @fs.read_file_to_string(path) catch {
+    @fs.read_file_to_bytes(path) catch {
       _ => raise io_diag("cannot read '\{path}'")
     }
   }
+}
+
+///|
+/// #51：任意输入文件的读取口（read_input 之外的散点——type-name-map /
+/// fill 目标 / migrate 扫描）共用同一「字节→校验→解码」纪律
+fn read_text_validated(path : String) -> String raise @src.Diag {
+  let bytes = @fs.read_file_to_bytes(path) catch {
+    _ => raise io_diag("cannot read '\{path}'")
+  }
+  @src.validate_utf8(bytes, path~)
+  @unicode.to_utf8_string(bytes)
+}
+
+///|
+/// #52：两份 .json.mbt 产物的**值面等价**（D-11 值语义底座 normalize_json
+/// + json_value_equal）——幂等闸兜底比对：排版差（moon fmt 改写）/派生
+/// 类型名差（人工审阅改名）豁免，数据差 = 漂移。任一侧解析失败（盘面
+/// 产物非合法 .json.mbt——篡改/截断）→ false（= 漂移，走 J5001）
+fn value_plane_equal(
+  a : String,
+  b : String,
+  path : String,
+  expected_name : String?,
+) -> Bool {
+  let va = try {
+    @src.build_value(a, path~, expected_name?)
+  } catch {
+    _ => return false
+  }
+  let vb = try {
+    @src.build_value(b, path~, expected_name?)
+  } catch {
+    _ => return false
+  }
+  @src.json_value_equal(@src.normalize_json(va), @src.normalize_json(vb))
 }
 
 ///|
@@ -989,15 +1057,21 @@ fn run_fill(
         return jdiag_exit(@src.JIO, "cannot read '\{path}'")
       }
   }
-  let existing = @fs.read_file_to_string(fill_target) catch {
-    _ =>
-      return jdiag_exit(
-        @src.JIO,
-        "cannot read fill target '\{fill_target}'",
-        help=Some(
-          "--fill needs an existing .json.mbt whose type header is reused",
-        ),
-      )
+  // #51：fill 目标同「字节→校验→解码」纪律——J1004 透传点名字节；
+  // IO 错保留原点名 fill target 文案
+  let existing = read_text_validated(fill_target) catch {
+    e =>
+      if e is @src.Diag(code=@src.JInvalidUtf8, ..) {
+        return print_diag_exit(e)
+      } else {
+        return jdiag_exit(
+          @src.JIO,
+          "cannot read fill target '\{fill_target}'",
+          help=Some(
+            "--fill needs an existing .json.mbt whose type header is reused",
+          ),
+        )
+      }
   }
   // #32-5④：不传 stem（期望名不绑源 JSON 文件名）——fill 语义 = 保留
   // 目标文件类型头只重写值体，绑定名校验在产物创建时已发生过
@@ -1016,8 +1090,12 @@ fn run_fill(
       }
   }
   if check {
-    // 分档幂等闸：与盘上产物行尾归一后比对（同 import --check 口径）
-    let up_to_date = normalize_eol(filled) == normalize_eol(existing)
+    // 分档幂等闸（#52 同 import --check 口径）：快路径字节比对（行尾
+    // 归一）+ 值面等价兜底——fill 产物被 moon fmt 改写（长数组形态）后
+    // 闸必须仍绿；值体数据差/盘面产物非法才红。fill 不绑期望名（#32-5④
+    // ——绑定名校验在产物创建时已发生）
+    let up_to_date = normalize_eol(filled) == normalize_eol(existing) ||
+      value_plane_equal(existing, filled, fill_target, None)
     if up_to_date {
       return 0
     }

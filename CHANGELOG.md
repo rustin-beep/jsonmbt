@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### Fixed（issue #51：非法 UTF-8 解码层前置校验 J1004——静默改写/丢弃/崩溃全收口）
+
+- **现象**（真实语料唯一值对拍失败样本 + 本机红证四形态）：MoonBit 字节→String 解码发生在自持解析器**之前**——值位 `0x80`/`0xC0` 静默丢弃成空串（rc 0，产物 `a: ""`）、值位 `fe fe ff ff` 改写成别的码位（issue 报告）/本机直接 **STATUS_HEAP_CORRUPTION 崩溃**、键位 `` 键被吞成 `a: Int32`（值面变形）、`k_ff` 报「unterminated string」文案与真因无关；且 import/check/`--check`/`--input json` 严格档**全闸假绿**——违反 §0「解压对值无损」与 RFC 8259 §8.1
+- **修法（新码 J1004，rc 1）**：`src/utf8.mbt` 严格 RFC 3629 字节级校验（overlong C0/C1/E0 80../F0 8F..、surrogate 编码 ED A0..、超 U+10FFFF F4 90..、F5..FF、孤立续字节、尾截断全拒）——文案点名字节/偏移/行列；`read_input` 双通道（file 走 `read_file_to_bytes`、stdin）与散点三处（type-name-map、fill 目标、migrate 扫描）统一「**字节→校验→解码**」纪律；键位/值位天然统一（拦截先于解析器）
+- **锚**：层 1 新锚 ×4（合法全谱零误伤 + issue 实测字节点名 + 结构化非法逐类 + 行列定位）153 → **157**；层 2 新锚 `invalid-utf8-gate`（值位/键位/严格档/stdin/type-name-map/build·check 面/migrate REJECT 榜七臂 + emoji 合法零误伤且 build 往返逐字节）48 → **50**
+
+### Fixed（issue #52：import --check 幂等闸改值面等价比对——moon fmt 改写不再打翻闸）
+
+- **现象**（README 流程自相矛盾，4/5 触发形态本机复现）：长数组形态产物非 moon fmt 不动点（真实语料 6.9%，emitter 宽度模型与 fmt 折行算法非单调差异）——`import` → `moon fmt`（README 推荐动作）→ `import --check` 必 **J5001 假红**，而 help「re-run import」等于要求放弃 fmt 改写
+- **修法（处方 b，闸语义松绑为数据面同步）**：比对 = 快路径（行尾归一字节相等）+ 兜底 `json_value_equal`（D-11 值语义底座：Number 规范文本、键序不敏感）——fmt 改写排版差、人工审阅类型名差豁免；数据真漂移、产物篡改（值面 parse 失败）仍 rc 2 J5001（闸仍有牙）；`--fill --check` 同款；D-7 绑定名参与校验（盘面绑定名被改 = 漂移）
+- **#18 承诺收缩勘误**：「import 产物即 moon fmt 不动点」在真实长数组上不成立——排版承诺收缩为「fmt-fixed-point 金门既有样本面对齐」（不补长数组——已知未收敛形态，补入即永红）；触发形态由新锚 `fmt-check-compat` 承接（fmt 改写后闸绿 ×4 形态 + fmt 前后 build 逐字节无损 + 篡改/数据漂移双负锚）；`--fmt` no-op hint 文案同步改（不再宣称不动点，指路 moon fmt 自跑）
+- **文档**：README 41 行承诺勘误 + import 段 --check 语义说明
+
+
 ### Fixed（审阅 86ce9fb：overwrite-guard 大小写臂「不误伤」断言哑弹——判据不互斥，换逐字节比对）
 
 - **现象**（A11 锚判据不互斥，端到端实证）：用例 ④ 敏感 FS 分支以 `contains("pub struct Hand")` 判「Hand.json.mbt 未被误伤」——而 import 产物（stem=hand）派生**同名类型** `pub struct Hand`，判据对手写原文与机器产物**同判**：缺陷真发生（变体文件被机器产物覆盖）时断言照绿。② 臂 `contains` 判据本有牙（h.json 产物派生 `H` ≠ 手写 `Hand`），但同型口径统一升级

@@ -160,9 +160,17 @@ fn run_migrate(root_arg : String, write : Bool, jsonc~ : Bool = true) -> Int32 {
   let mut n_reject = 0
   for f in files {
     let (disp, full) = f
-    let raw = @fs.read_file_to_string(full) catch {
-      _ => {
-        print_out("\{disp} → REJECT (cannot read)")
+    // #51：同「字节→校验→解码」纪律——非法 UTF-8 是**病态输入**非 IO 错：
+    // 记 REJECT 榜并点名首错字节（migrate 是批处理，fail loud 单文件即
+    // 停整批太脆——REJECT 计数 + stderr 诊断是本命令的既有语义位）
+    let raw = read_text_validated(full) catch {
+      e => {
+        if e is @src.Diag(code=@src.JInvalidUtf8, ..) {
+          write_stderr(e.render())
+          print_out("\{disp} → REJECT (invalid UTF-8)")
+        } else {
+          print_out("\{disp} → REJECT (cannot read)")
+        }
         n_reject = n_reject + 1
         continue
       }
